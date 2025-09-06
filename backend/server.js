@@ -137,6 +137,9 @@ const errorHandler = (err, req, res, next) => {
   });
 };
 
+app.get("/",(req,res)=>{
+  res.send("Welcome to the server!!")
+})
 // Health check
 app.get('/api/health', (req, res) => {
   res.json({ 
