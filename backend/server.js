@@ -385,7 +385,7 @@ app.post('/api/ai/transcribe', authenticateToken, upload.single('audio'), async 
 });
 
 // AI Analysis Route
-app.post('/api/ai/analyze', async (req, res) => {
+app.post('/api/ai/analyze', authenticateToken, async (req, res) => {
   try {
     const { transcription, context } = req.body;
 
