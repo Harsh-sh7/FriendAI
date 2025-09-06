@@ -2,7 +2,7 @@ import axios from 'axios';
 
 // Create API instance
 export const api = axios.create({
-  baseURL: 'https://friendai-5ww9.onrender.com/',
+  baseURL: 'https://friendai-5ww9.onrender.com',
   timeout: 30000,
   headers: {
     'Content-Type': 'application/json',
