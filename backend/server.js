@@ -140,6 +140,15 @@ const errorHandler = (err, req, res, next) => {
 app.get("/",(req,res)=>{
   res.send("Welcome to the server!!")
 })
+
+setInterval(()=>{
+
+  const fetchApi = async () =>{
+    const res = await fetch("https://friendai-5ww9.onrender.com/api/health")
+  }
+
+  fetchApi();
+},600000)
 // Health check
 app.get('/api/health', (req, res) => {
   res.json({ 
