@@ -1,202 +1,430 @@
-# Personal Friend AI
+# 🧠 AI Friend - Personal Wellness Companion
 
-A comprehensive personal AI companion for daily wellness tracking, mood monitoring, and life guidance.
+A comprehensive AI-powered wellness application that helps you track your mood, manage tasks, build habits, and achieve goals through intelligent journaling and analytics.
+
+---
 
 ## 🌟 Features
 
-- **Daily AI Conversations**: Talk to your AI friend about your day using voice or text
-- **Mood Tracking**: Automatic mood analysis with interactive charts (weekly/monthly)
-- **Task Management**: Create, track, and reschedule tasks with AI suggestions
-- **Speech-to-Text**: Record your thoughts and have them transcribed automatically
-- **Text-to-Speech**: Listen to AI responses with ElevenLabs integration
-- **Dark/Light Mode**: Monochrome theme with seamless theme switching
-- **Secure Authentication**: JWT-based auth with Supabase integration
+### Core Features
+- **🗣️ Daily AI Conversations** - Chat with your AI companion about your day
+- **📊 Mood Tracking** - Automatic mood analysis with interactive charts
+- **✅ Task Management** - Create, track, and manage tasks with priorities
+- **🎯 Goal Setting** - Set long-term goals with milestones and progress tracking
+- **⚡ Habit Tracker** - Build positive habits with streak counting
+- **📈 Analytics Dashboard** - AI-powered insights and correlations
+- **💾 Data Export** - Export all your data in JSON or CSV format
+- **🌓 Dark/Light Mode** - Seamless theme switching
+- **📱 Fully Responsive** - Works perfectly on all devices
+
+### AI-Powered Intelligence
+- Mood detection from journal entries
+- Personalized insights and recommendations
+- Pattern recognition across mood, tasks, and habits
+- Smart task/goal/habit suggestions from conversations
+- Correlation analysis (e.g., "Your mood is higher on days you exercise")
+
+---
 
 ## 🛠️ Tech Stack
 
 ### Backend
-- Node.js + Express.js
-- Supabase (PostgreSQL) for data persistence
-- Gemini AI for intelligent conversations
-- ElevenLabs for text-to-speech
-- JWT authentication
-- Rate limiting and security features
+- **Runtime**: Node.js + Express.js
+- **Database**: MongoDB with Mongoose (with in-memory fallback)
+- **AI**: Google Gemini AI for intelligent conversations
+- **Authentication**: JWT-based auth with bcrypt password hashing
+- **Security**: Rate limiting, helmet, CORS, input validation
 
 ### Frontend
-- React 18 with modern hooks
-- TailwindCSS for styling
-- React Router for navigation
-- Recharts for mood visualizations
-- Framer Motion for animations
-- Axios for API calls
-
-## 🚀 Getting Started
-
-### Prerequisites
-- Node.js 18+ and npm
-- Supabase account
-- Gemini AI API key
-- ElevenLabs API key
-
-### 1. Backend Setup
-
-```bash
-cd backend
-npm install
-```
-
-### 2. Environment Configuration
-
-Create `.env` file in backend directory:
-```env
-# API Keys
-ELEVENLABS_API_KEY=your_elevenlabs_api_key
-GEMINI_API_KEY=your_gemini_api_key
-
-# Supabase Configuration
-SUPABASE_URL=your_supabase_project_url
-SUPABASE_ANON_KEY=your_supabase_anon_key
-SUPABASE_SERVICE_ROLE_KEY=your_supabase_service_role_key
-
-# JWT Configuration
-JWT_SECRET=your-secret-key-here
-JWT_EXPIRES_IN=7d
-
-# Server Configuration
-PORT=5000
-NODE_ENV=development
-
-# Security
-BCRYPT_ROUNDS=12
-```
-
-### 3. Database Setup
-
-1. Create a new Supabase project
-2. Go to SQL Editor in your dashboard
-3. Run the SQL from `supabase-schema.sql`
-4. Update your `.env` with Supabase credentials
-
-### 4. Frontend Setup
-
-```bash
-cd frontend
-npm install
-```
-
-### 5. Start Development Servers
-
-Backend:
-```bash
-cd backend
-npm run dev
-```
-
-Frontend (in new terminal):
-```bash
-cd frontend
-npm run dev
-```
-
-The app will be available at `http://localhost:3000`
-
-## 📝 Usage
-
-1. **Sign Up**: Create an account with email and password
-2. **Daily Check-in**: Use the Chat page to talk about your day
-3. **Voice Input**: Click the microphone to record your thoughts
-4. **AI Analysis**: Get personalized insights and mood scoring
-5. **Task Management**: Create and track daily/weekly tasks
-6. **Mood Trends**: View your mood patterns over time
-7. **Theme Toggle**: Switch between light and dark modes
-
-## 🎯 Core Workflows
-
-### Daily Journal Flow
-1. Navigate to Chat page
-2. Click microphone or type your daily reflection
-3. AI analyzes your input and provides:
-   - Supportive summary
-   - Actionable suggestions
-   - Mood score (1-10)
-   - Motivational message
-4. Listen to AI response with text-to-speech
-5. Data automatically saved for trend analysis
-
-### Task Management Flow
-1. Go to Tasks page
-2. Create new tasks with priorities and due dates
-3. AI suggests optimal scheduling
-4. Mark tasks complete or reschedule
-5. View productivity analytics
-
-### Mood Analytics Flow
-1. Visit Mood page
-2. View weekly/monthly mood trends
-3. Correlate mood with activities and tasks
-4. Get AI insights on mood patterns
-
-## 🔧 API Endpoints
-
-### Authentication
-- `POST /api/auth/register` - Create account
-- `POST /api/auth/login` - Sign in
-- `GET /api/auth/me` - Get current user
-
-### AI Features
-- `POST /api/ai/transcribe` - Speech-to-text
-- `POST /api/ai/analyze` - Text analysis with mood scoring
-- `POST /api/ai/speak` - Text-to-speech
-
-### Data Management
-- `GET /api/dashboard` - Dashboard statistics
-- `GET /api/tasks` - User tasks
-- `POST /api/tasks` - Create task
-- `PUT /api/tasks/:id` - Update task
-- `GET /api/journal` - Journal entries
-- `GET /api/mood/analytics` - Mood data
-
-## 🎨 Design System
-
-- **Monochrome Theme**: Black and white color scheme
-- **Clean Typography**: Inter font family
-- **Minimalist Icons**: Lucide React icons
-- **Smooth Animations**: Framer Motion transitions
-- **Responsive Layout**: Mobile-first design
-- **Accessibility**: ARIA labels and keyboard navigation
-
-## 🔒 Security Features
-
-- Password hashing with bcrypt
-- JWT token authentication
-- Rate limiting on API endpoints
-- Row-level security in Supabase
-- Input validation and sanitization
-- CORS and helmet security headers
-
-## 🚨 Important Notes
-
-1. **Supabase Setup Required**: The app needs a configured Supabase project
-2. **API Keys**: All API keys must be configured for full functionality
-3. **Speech Recognition**: Uses browser's built-in speech recognition API
-4. **Text-to-Speech**: Falls back to browser TTS if ElevenLabs unavailable
-5. **Mock Data**: Some features use mock data for development
-
-## 📱 Browser Support
-
-- Chrome/Edge 88+
-- Firefox 85+
-- Safari 14+
-- Mobile browsers with WebRTC support
-
-## 🤝 Contributing
-
-This is a personal project, but feel free to fork and customize for your needs.
-
-## 📄 License
-
-MIT License - feel free to use this code for your personal projects.
+- **Framework**: React 18 with modern hooks
+- **Styling**: TailwindCSS with custom design system
+- **Routing**: React Router v6
+- **Charts**: Recharts for mood visualizations
+- **HTTP Client**: Axios with interceptors
+- **Notifications**: React Hot Toast
+- **Icons**: Lucide React
 
 ---
 
-Built with ❤️ for personal wellness and AI-powered self-reflection.
+## 🚀 Quick Start
+
+### Prerequisites
+- Node.js 18+ and npm
+- MongoDB URI (optional - uses in-memory storage if not provided)
+- Google Gemini API key
+
+### 1. Clone Repository
+```bash
+git clone <repository-url>
+cd PersonalFriendAI
+```
+
+### 2. Backend Setup
+```bash
+cd backend
+npm install
+```
+
+Create `.env` file:
+```env
+# Required
+GEMINI_API_KEY=your_gemini_api_key_here
+JWT_SECRET=your_secret_key_here
+
+# Optional (uses in-memory storage if not provided)
+MONGODB_URI=mongodb://localhost:27017/ai-friend
+
+# Optional Configuration
+PORT=5002
+NODE_ENV=development
+JWT_EXPIRES_IN=7d
+BCRYPT_ROUNDS=12
+```
+
+Start backend:
+```bash
+npm run dev
+```
+
+### 3. Frontend Setup
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+### 4. Access Application
+- Frontend: http://localhost:3000
+- Backend API: http://localhost:5002
+
+---
+
+## 📁 Project Structure
+
+```
+PersonalFriendAI/
+├── backend/
+│   ├── middleware/
+│   │   └── auth.js              # Authentication middleware
+│   ├── routes/
+│   │   └── auth.js              # Auth routes (modular)
+│   ├── utils/
+│   │   └── helpers.js           # Utility functions
+│   ├── models.js                # MongoDB schemas
+│   ├── storage.js               # Storage abstraction layer
+│   ├── server.js                # Express app & routes
+│   ├── .env                     # Environment variables
+│   └── package.json
+│
+├── frontend/
+│   ├── src/
+│   │   ├── components/
+│   │   │   ├── Navbar.jsx       # Navigation with hamburger menu
+│   │   │   └── LoadingSpinner.jsx
+│   │   ├── contexts/
+│   │   │   ├── AuthContext.jsx  # Authentication state
+│   │   │   └── ThemeContext.jsx # Theme management
+│   │   ├── pages/
+│   │   │   ├── Dashboard.jsx    # Main dashboard
+│   │   │   ├── Chat.jsx         # Conversational journal
+│   │   │   ├── Tasks.jsx        # Task management
+│   │   │   ├── Goals.jsx        # Goal tracking
+│   │   │   ├── Habits.jsx       # Habit building
+│   │   │   ├── Mood.jsx         # Mood analytics
+│   │   │   ├── Login.jsx        # Authentication
+│   │   │   └── Register.jsx
+│   │   ├── utils/
+│   │   │   └── api.js           # API helper functions
+│   │   ├── App.jsx              # Main app component
+│   │   └── index.css            # Global styles
+│   └── package.json
+│
+└── README.md                    # This file
+```
+
+---
+
+## 🔌 API Endpoints
+
+### Authentication
+```
+POST   /api/auth/register    # Create account
+POST   /api/auth/login       # Sign in
+GET    /api/auth/me          # Get current user
+```
+
+### AI Features
+```
+POST   /api/ai/analyze       # Analyze text and detect mood
+POST   /api/ai/speak         # Text-to-speech (browser-based)
+```
+
+### Dashboard
+```
+GET    /api/dashboard        # Get dashboard data with AI insights
+```
+
+### Journal
+```
+GET    /api/journal          # Get journal entries
+POST   /api/journal          # Create journal entry
+```
+
+### Tasks
+```
+GET    /api/tasks            # Get all tasks
+POST   /api/tasks            # Create task
+PUT    /api/tasks/:id        # Update task
+DELETE /api/tasks/:id        # Delete task
+```
+
+### Goals
+```
+GET    /api/goals            # Get all goals (filter by status)
+POST   /api/goals            # Create goal
+PUT    /api/goals/:id        # Update goal (progress, milestones)
+DELETE /api/goals/:id        # Delete goal
+```
+
+### Habits
+```
+GET    /api/habits           # Get all habits (filter by active)
+POST   /api/habits           # Create habit
+PUT    /api/habits/:id       # Update habit
+POST   /api/habits/:id/complete  # Mark habit as completed
+DELETE /api/habits/:id       # Delete habit
+```
+
+### Mood Analytics
+```
+GET    /api/mood/analytics   # Get mood data (weekly/monthly)
+```
+
+### Data Export
+```
+GET    /api/export?format=json  # Export all data as JSON
+GET    /api/export?format=csv   # Export journal as CSV
+```
+
+---
+
+## 🎨 Key Features Explained
+
+### 1. Conversational Journaling
+- Chat interface for daily reflections
+- AI detects mood from your writing
+- Suggests actionable tasks, goals, or habits
+- One-click to add suggestions to your lists
+- Persistent chat history (daily-based)
+- Browser text-to-speech for AI responses
+
+### 2. Smart Dashboard
+- AI-generated insights based on your data
+- Correlations (e.g., "High mood correlates with task completion")
+- Quick stats: streak, mood, goals, habits
+- Today's habits with completion tracking
+- Active goals with progress bars
+- Upcoming tasks with due dates
+- Recent journal entries
+
+### 3. Task Management
+- Create tasks with title, description, due date, priority
+- Smart task suggestions based on time of day
+- One-click task completion
+- Link tasks to goals (optional)
+- Delete with completion confirmation
+
+### 4. Goal Tracking
+- Set goals with categories (Health, Career, Personal, etc.)
+- Add milestones to break down goals
+- Visual progress bars (0-100%)
+- Track completion status
+- Filter by active/completed/abandoned
+
+### 5. Habit Building
+- Create daily, weekly, or custom habits
+- Automatic streak calculation
+- Visual 7-day completion history
+- Prevent duplicate completions
+- Gamification with fire emoji for streaks
+
+### 6. Mood Analytics
+- Weekly and monthly mood charts
+- Average mood calculation
+- Trend analysis
+- Correlation with habits and tasks
+
+---
+
+## 🔒 Security Features
+
+- **Password Security**: bcrypt hashing with 12 rounds
+- **Authentication**: JWT tokens with configurable expiration
+- **Rate Limiting**: Separate limits for auth, AI, and general routes
+- **Input Validation**: Server-side validation for all inputs
+- **CORS**: Configured for frontend origin
+- **Helmet**: Security headers
+- **Data Isolation**: User-specific data filtering
+
+---
+
+## 💾 Data Storage
+
+### MongoDB Mode (Production)
+- Persistent data storage
+- Scalable and reliable
+- Automatic indexing for performance
+
+### In-Memory Mode (Development)
+- No MongoDB required
+- Perfect for testing
+- Data resets on server restart
+- Automatically used if `MONGODB_URI` is not provided
+
+---
+
+## 🎯 Environment Variables
+
+### Required
+```env
+GEMINI_API_KEY=<your-gemini-api-key>
+JWT_SECRET=<random-secret-string>
+```
+
+### Optional
+```env
+MONGODB_URI=<mongodb-connection-string>  # Uses in-memory if not set
+PORT=5002                                # Default: 5002
+NODE_ENV=development                     # development | production
+JWT_EXPIRES_IN=7d                        # Token expiration
+BCRYPT_ROUNDS=12                         # Password hashing rounds
+```
+
+---
+
+## 🚨 Important Notes
+
+1. **Gemini API Required**: You need a Google Gemini API key for AI features
+   - Get it from: https://makersuite.google.com/app/apikey
+
+2. **MongoDB Optional**: App works without MongoDB using in-memory storage
+   - Perfect for development and testing
+   - Use MongoDB for production to persist data
+
+3. **Browser Compatibility**: 
+   - Speech recognition works best in Chrome/Edge
+   - Text-to-speech uses browser's native synthesis
+
+4. **Data Persistence**: 
+   - In-memory mode: Data lost on restart
+   - MongoDB mode: Data persists permanently
+
+5. **Port Configuration**: 
+   - Backend: 5002 (configurable)
+   - Frontend: 3000 (Vite default)
+
+---
+
+## 📱 Mobile Responsiveness
+
+- **Hamburger Menu**: Mobile navigation with slide-down menu
+- **Touch-Friendly**: Optimized tap targets (44x44px minimum)
+- **Responsive Text**: Scales from mobile to desktop
+- **Adaptive Layouts**: 1-4 column grids based on screen size
+- **No Horizontal Scroll**: Content fits all screen widths
+
+---
+
+## 🐛 Troubleshooting
+
+### Backend won't start
+```bash
+# Check if port 5002 is in use
+lsof -i :5002
+
+# Kill process if needed
+kill -9 <PID>
+
+# Check environment variables
+cat backend/.env
+```
+
+### Frontend won't connect to backend
+```bash
+# Verify backend is running
+curl http://localhost:5002/api/auth/me
+
+# Check CORS settings in server.js
+# Ensure frontend URL is allowed
+```
+
+### MongoDB connection issues
+```bash
+# Test MongoDB connection
+mongosh <your-mongodb-uri>
+
+# Or use in-memory mode
+# Remove MONGODB_URI from .env
+```
+
+### AI features not working
+```bash
+# Verify Gemini API key
+echo $GEMINI_API_KEY
+
+# Test API key
+curl -H "Content-Type: application/json" \
+  -d '{"contents":[{"parts":[{"text":"Hello"}]}]}' \
+  "https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key=YOUR_API_KEY"
+```
+
+---
+
+## 🎓 Development Guide
+
+### Adding a New Feature
+1. Create database model in `models.js`
+2. Add storage methods in `storage.js`
+3. Create API routes in `server.js` (or new route file)
+4. Add API helper in `frontend/src/utils/api.js`
+5. Create frontend page/component
+6. Add route in `App.jsx`
+7. Update navigation in `Navbar.jsx`
+
+### Code Style
+- Use ES6+ features
+- Async/await for promises
+- Functional components with hooks
+- TailwindCSS for styling
+- Meaningful variable names
+- Comments for complex logic
+
+---
+
+## 📄 License
+
+This project is for personal use and learning purposes.
+
+---
+
+## 🙏 Acknowledgments
+
+- **Google Gemini AI** - For intelligent conversation capabilities
+- **MongoDB** - For reliable data storage
+- **React** - For building the user interface
+- **TailwindCSS** - For beautiful styling
+- **Lucide React** - For clean, modern icons
+
+---
+
+## 📞 Support
+
+For issues or questions:
+1. Check the Troubleshooting section above
+2. Review the code comments
+3. Check console logs for errors
+4. Verify environment variables are set correctly
+
+---
+
+**Built with ❤️ for personal wellness and productivity**

@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { apiHelpers } from '../utils/api';
-import { CheckSquare, Plus, Calendar, Trash2 } from 'lucide-react';
+import { CheckSquare, Plus, Calendar, Trash2, Sparkles } from 'lucide-react';
 import toast from 'react-hot-toast';
 import LoadingSpinner from '../components/LoadingSpinner';
 
@@ -49,22 +49,30 @@ const Tasks = () => {
     }
   };
 
-  const toggleTask = async (taskId, completed) => {
+  const toggleTask = async (task, completed) => {
     try {
-      await apiHelpers.updateTask(taskId, { completed: !completed });
-      toast.success(completed ? 'Task unmarked' : 'Task completed!');
+      // Use _id or id field from task object
+      const id = task._id || task.id;
+      if (!id) {
+        console.error('Task has no ID:', task);
+        toast.error('Invalid task ID');
+        return;
+      }
+      await apiHelpers.updateTask(id, { completed: !completed });
+      toast.success(completed ? 'Task unmarked' : '✓ Task completed!');
       fetchTasks();
     } catch (error) {
+      console.error('Failed to update task:', error);
       toast.error('Failed to update task');
     }
   };
 
-  const deleteTask = async (taskId, taskTitle) => {
+  const deleteTask = async (task, taskTitle) => {
     // Create a custom confirmation dialog
     const isCompleted = window.confirm(
       `🎉 Did you complete "${taskTitle}"?\n\n` +
       `✅ Click "OK" if you COMPLETED this task\n` +
-      `   (This will count towards your achievements and productivity stats!)\n\n` +
+      `   (This will count towards your achievements!)\n\n` +
       `❌ Click "Cancel" if you want to remove it WITHOUT marking as completed`
     );
     
@@ -72,35 +80,92 @@ const Tasks = () => {
     if (!isCompleted) {
       const shouldDelete = window.confirm(
         `🗑️ Delete "${taskTitle}" without completing it?\n\n` +
-        `This will permanently remove the task from your list without\n` +
-        `adding it to your completion stats.\n\n` +
-        `Click "OK" to delete permanently, "Cancel" to keep the task.`
+        `This will permanently remove the task.\n\n` +
+        `Click "OK" to delete, "Cancel" to keep the task.`
       );
       if (!shouldDelete) return; // User doesn't want to delete at all
     }
     
     try {
+      // Use _id or id field from task object
+      const id = task._id || task.id;
+      if (!id) {
+        console.error('Task has no ID:', task);
+        toast.error('Invalid task ID');
+        return;
+      }
+      
       // If task is being marked as completed, update it first
       if (isCompleted) {
-        await apiHelpers.updateTask(taskId, { 
+        await apiHelpers.updateTask(id, { 
           completed: true,
           completed_at: new Date().toISOString()
         });
         toast.success('🎉 Task completed! Great job!');
         // Small delay to show the completion message
         setTimeout(async () => {
-          await apiHelpers.deleteTask(taskId);
+          await apiHelpers.deleteTask(id);
           toast.success('Task archived successfully');
           fetchTasks();
         }, 1000);
       } else {
         // Just delete without marking as completed
-        await apiHelpers.deleteTask(taskId);
+        await apiHelpers.deleteTask(id);
         toast.success('Task deleted');
         fetchTasks();
       }
     } catch (error) {
+      console.error('Failed to delete task:', error);
       toast.error('Failed to delete task');
+    }
+  };
+
+  // Smart task suggestions based on time of day
+  const getTaskSuggestions = () => {
+    const hour = new Date().getHours();
+    
+    if (hour >= 5 && hour < 12) {
+      // Morning suggestions
+      return [
+        { title: 'Morning meditation or stretching', priority: 'medium' },
+        { title: 'Review today\'s priorities', priority: 'high' },
+        { title: 'Healthy breakfast', priority: 'medium' },
+        { title: 'Check and respond to important emails', priority: 'high' }
+      ];
+    } else if (hour >= 12 && hour < 17) {
+      // Afternoon suggestions
+      return [
+        { title: 'Complete most important task of the day', priority: 'high' },
+        { title: 'Take a short break and walk', priority: 'medium' },
+        { title: 'Review progress on current projects', priority: 'medium' },
+        { title: 'Schedule tomorrow\'s priorities', priority: 'low' }
+      ];
+    } else if (hour >= 17 && hour < 22) {
+      // Evening suggestions
+      return [
+        { title: 'Wrap up work for the day', priority: 'medium' },
+        { title: 'Plan tomorrow\'s tasks', priority: 'high' },
+        { title: 'Exercise or physical activity', priority: 'medium' },
+        { title: 'Quality time with family/friends', priority: 'high' }
+      ];
+    } else {
+      // Night/Late suggestions
+      return [
+        { title: 'Prepare for tomorrow', priority: 'medium' },
+        { title: 'Evening wind-down routine', priority: 'high' },
+        { title: 'Read or journal', priority: 'low' },
+        { title: 'Get 7-8 hours of sleep', priority: 'high' }
+      ];
+    }
+  };
+
+  const addSuggestedTask = async (suggestion) => {
+    try {
+      await apiHelpers.createTask(suggestion);
+      toast.success('✓ Task added!');
+      fetchTasks();
+    } catch (error) {
+      toast.error('Failed to add task');
     }
   };
 
@@ -127,7 +192,7 @@ const Tasks = () => {
       {/* Add Task Form */}
       {showAddForm && (
         <div className="card mb-6 fade-in-up accent-dot">
-          <h3 className="text-lg font-semibold mb-4 text-gray-900 dark:text-gray-100">Add New Task</h3>
+          <h3 className="text-lg font-semibold mb-4 text-gray-900 dark:text-gray-100">Create New Task</h3>
           <form onSubmit={handleAddTask} className="space-y-4">
             <input
               type="text"
@@ -160,7 +225,7 @@ const Tasks = () => {
               </select>
             </div>
             <div className="flex space-x-3 pt-2">
-              <button type="submit" className="btn-primary floating">Add Task</button>
+              <button type="submit" className="btn-primary floating">Create Task</button>
               <button
                 type="button"
                 onClick={() => setShowAddForm(false)}
@@ -170,6 +235,41 @@ const Tasks = () => {
               </button>
             </div>
           </form>
+        </div>
+      )}
+
+      {/* Smart Task Suggestions */}
+      {!showAddForm && tasks.length < 10 && (
+        <div className="card mb-6 fade-in-up accent-dot bg-gradient-to-br from-blue-50 to-purple-50 dark:from-blue-900/20 dark:to-purple-900/20 border-blue-200 dark:border-blue-800">
+          <div className="flex items-center space-x-2 mb-4">
+            <Sparkles className="w-5 h-5 text-blue-600 dark:text-blue-400" />
+            <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
+              Suggested Tasks for {new Date().getHours() < 12 ? 'Morning' : new Date().getHours() < 17 ? 'Afternoon' : new Date().getHours() < 22 ? 'Evening' : 'Tonight'}
+            </h3>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            {getTaskSuggestions().map((suggestion, index) => (
+              <button
+                key={index}
+                onClick={() => addSuggestedTask(suggestion)}
+                className="flex items-center justify-between p-3 bg-white dark:bg-gray-800 rounded-lg border-2 border-gray-200 dark:border-gray-700 hover:border-blue-400 dark:hover:border-blue-600 hover:scale-[1.02] active:scale-[0.98] transition-all duration-200 shadow-sm hover:shadow-md text-left"
+              >
+                <div className="flex-1">
+                  <p className="text-sm font-medium text-gray-900 dark:text-gray-100">
+                    {suggestion.title}
+                  </p>
+                  <p className={`text-xs mt-1 font-medium ${
+                    suggestion.priority === 'high' ? 'text-red-600 dark:text-red-400' :
+                    suggestion.priority === 'medium' ? 'text-yellow-600 dark:text-yellow-400' :
+                    'text-green-600 dark:text-green-400'
+                  }`}>
+                    {suggestion.priority} priority
+                  </p>
+                </div>
+                <Plus className="w-5 h-5 text-blue-600 dark:text-blue-400 flex-shrink-0 ml-2" />
+              </button>
+            ))}
+          </div>
         </div>
       )}
 
@@ -194,13 +294,13 @@ const Tasks = () => {
         ) : (
           tasks.map((task, index) => (
             <div 
-              key={task.id} 
+              key={task.id || `task-${index}`} 
               className="card fade-in-up accent-dot hover:scale-[1.02] transition-all duration-300"
               style={{ animationDelay: `${index * 100}ms` }}
             >
               <div className="flex items-center space-x-4">
                 <button
-                  onClick={() => toggleTask(task.id, task.completed)}
+                  onClick={() => toggleTask(task, task.completed)}
                   className={`p-2 rounded-full transition-all duration-200 hover:scale-110 active:scale-95 shadow-md hover:shadow-lg ${
                     task.completed
                       ? 'bg-green-500 hover:bg-green-600 text-white shadow-green-200 dark:shadow-green-800/30'
@@ -241,7 +341,7 @@ const Tasks = () => {
                 </div>
                 
                 <button
-                  onClick={() => deleteTask(task.id, task.title)}
+                  onClick={() => deleteTask(task, task.title)}
                   className="p-2 text-gray-400 hover:text-red-500 transition-all duration-200 rounded-full hover:bg-red-50 dark:hover:bg-red-900/20 hover:scale-110 active:scale-95 hover:shadow-md"
                   title="Delete task"
                 >

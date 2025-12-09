@@ -66,6 +66,25 @@ export const apiHelpers = {
   // Mood Analytics
   getMoodAnalytics: (period = 'weekly') => 
     api.get(`/api/mood/analytics?period=${period}`),
+  
+  // Goals
+  getGoals: (status) => api.get('/api/goals', { params: { status } }),
+  createGoal: (goal) => api.post('/api/goals', goal),
+  updateGoal: (id, updates) => api.put(`/api/goals/${id}`, updates),
+  deleteGoal: (id) => api.delete(`/api/goals/${id}`),
+  
+  // Habits
+  getHabits: (active) => api.get('/api/habits', { params: { active } }),
+  createHabit: (habit) => api.post('/api/habits', habit),
+  updateHabit: (id, updates) => api.put(`/api/habits/${id}`, updates),
+  completeHabit: (id, notes) => api.post(`/api/habits/${id}/complete`, { notes }),
+  deleteHabit: (id) => api.delete(`/api/habits/${id}`),
+  
+  // Data Export
+  exportData: (format = 'json') => api.get('/api/export', { 
+    params: { format },
+    responseType: format === 'csv' ? 'blob' : 'json'
+  }),
 };
 
 export default api;

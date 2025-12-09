@@ -1,541 +1,509 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { apiHelpers } from '../utils/api';
-import { Mic, MicOff, Send, Volume2, VolumeX } from 'lucide-react';
+import { Send, Sparkles, CheckSquare, Target, Zap, Plus } from 'lucide-react';
 import toast from 'react-hot-toast';
-import LoadingSpinner from '../components/LoadingSpinner';
 
 const Chat = () => {
-  const [isRecording, setIsRecording] = useState(false);
-  const [transcription, setTranscription] = useState('');
-  const [aiResponse, setAiResponse] = useState(null);
-  const [loading, setLoading] = useState(false);
+  const [messages, setMessages] = useState([]);
   const [textInput, setTextInput] = useState('');
-  const [isPlaying, setIsPlaying] = useState(false);
-  const [audioUrl, setAudioUrl] = useState(null);
-  const [usedMicrophone, setUsedMicrophone] = useState(false); // Track input method
-  
-  const mediaRecorderRef = useRef(null);
-  const audioRef = useRef(null);
-  const recognitionRef = useRef(null);
-  const audioChunksRef = useRef([]);
-  const processingRef = useRef(false);
+  const [loading, setLoading] = useState(false);
+  const [suggestedActions, setSuggestedActions] = useState([]);
+  const messagesEndRef = useRef(null);
+  const textareaRef = useRef(null);
 
-  // Function to create complete AI response text for TTS
-  const createCompleteResponseText = (response) => {
-    let fullText = '';
-    
-    if (response.summary) {
-      fullText += response.summary + ' ';
-    }
-    
-    if (response.consolation) {
-      fullText += response.consolation + ' ';
-    }
-    
-    if (response.suggestions && response.suggestions.length > 0) {
-      fullText += 'Here are some suggestions for tomorrow: ';
-      response.suggestions.forEach((suggestion, index) => {
-        fullText += `${index + 1}. ${suggestion}. `;
-      });
-    }
-    
-    if (response.motivation) {
-      fullText += response.motivation + ' ';
-    }
-    
-    if (response.knowledgeNugget) {
-      fullText += `And here's something interesting: ${response.knowledgeNugget}`;
-    }
-    
-    return fullText.trim();
+  // Get today's date key for localStorage
+  const getTodayKey = () => {
+    const today = new Date();
+    return `chat_${today.getFullYear()}_${today.getMonth()}_${today.getDate()}`;
   };
 
-  // Initialize speech recognition
+  // Load today's chat from localStorage
   useEffect(() => {
-    if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
-      const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-      recognitionRef.current = new SpeechRecognition();
-      recognitionRef.current.continuous = false; // Don't use continuous mode
-      recognitionRef.current.interimResults = true; // Get interim results for better UX
-      recognitionRef.current.lang = 'en-US';
-      
-      // Add more configuration for better reliability
-      recognitionRef.current.maxAlternatives = 3;
-      
-      console.log('Speech recognition initialized successfully');
-
-      recognitionRef.current.onresult = (event) => {
-        console.log('Speech recognition result event:', event);
-        let finalTranscript = '';
-        
-        for (let i = event.resultIndex; i < event.results.length; i++) {
-          const transcript = event.results[i][0].transcript;
-          console.log('Transcript part:', transcript, 'isFinal:', event.results[i].isFinal);
-          
-          if (event.results[i].isFinal) {
-            finalTranscript += transcript;
-          }
-        }
-        
-        if (finalTranscript.trim()) {
-          console.log('Final transcript received:', finalTranscript);
-          setTranscription(prev => {
-            const current = prev || '';
-            const newText = current ? current + ' ' + finalTranscript : finalTranscript;
-            console.log('Setting transcription to:', newText.trim());
-            return newText.trim();
-          });
-        }
-      };
-
-      recognitionRef.current.onerror = (event) => {
-        console.log('Speech recognition error:', event.error);
-        // Handle speech recognition errors - try to continue
-        if (event.error === 'network') {
-          console.log('Network error - this is common and doesn\'t stop recognition');
-        } else if (event.error === 'not-allowed') {
-          console.log('Microphone permission denied');
-          toast.error('Microphone permission denied. Please allow microphone access.');
-        } else if (event.error === 'no-speech') {
-          console.log('No speech detected');
-        } else {
-          console.log('Other speech recognition error:', event.error);
-        }
-      };
-      
-      recognitionRef.current.onstart = () => {
-        console.log('Speech recognition started');
-      };
-      
-      recognitionRef.current.onend = () => {
-        console.log('Speech recognition ended');
-      };
+    const todayKey = getTodayKey();
+    const savedChat = localStorage.getItem(todayKey);
+    
+    if (savedChat) {
+      try {
+        const parsedChat = JSON.parse(savedChat);
+        setMessages(parsedChat.map(msg => ({
+          ...msg,
+          timestamp: new Date(msg.timestamp)
+        })));
+      } catch (error) {
+        console.error('Failed to load chat:', error);
+        initializeChat();
+      }
     } else {
-      console.log('Speech recognition not supported in this browser');
+      initializeChat();
     }
   }, []);
 
-  const startRecording = async () => {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      
-      // Try to start speech recognition
-      if (recognitionRef.current) {
-        try {
-          console.log('Attempting to start speech recognition...');
-          recognitionRef.current.start();
-          console.log('Speech recognition start command sent');
-        } catch (speechError) {
-          console.warn('Speech recognition failed to start:', speechError);
-          toast.error('Speech recognition unavailable. Audio recording will continue.');
-        }
-      } else {
-        console.log('Speech recognition not available');
-        toast.error('Speech recognition not supported in this browser.');
-      }
-      
-      // Start audio recording with fallback mime types
-      let mimeType = 'audio/webm;codecs=opus';
-      if (!MediaRecorder.isTypeSupported(mimeType)) {
-        mimeType = 'audio/webm';
-      }
-      if (!MediaRecorder.isTypeSupported(mimeType)) {
-        mimeType = 'audio/mp4';
-      }
-      if (!MediaRecorder.isTypeSupported(mimeType)) {
-        mimeType = ''; // Use default
-      }
-      
-      mediaRecorderRef.current = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
-      audioChunksRef.current = [];
-      
-      mediaRecorderRef.current.ondataavailable = (event) => {
-        if (event.data.size > 0) {
-          audioChunksRef.current.push(event.data);
-        }
-      };
-      
-      mediaRecorderRef.current.onerror = (event) => {
-        console.error('MediaRecorder error:', event.error);
-        toast.error('Recording error occurred');
-        setIsRecording(false);
-      };
-      
-      mediaRecorderRef.current.start();
-      setIsRecording(true);
-      processingRef.current = false; // Reset processing flag
-      toast.success('Recording started. Speak now!');
-    } catch (error) {
-      console.error('Error starting recording:', error);
-      if (error.name === 'NotAllowedError') {
-        toast.error('Microphone permission denied. Please allow microphone access.');
-      } else if (error.name === 'NotFoundError') {
-        toast.error('No microphone found. Please connect a microphone.');
-      } else {
-        toast.error('Failed to start recording. Check microphone permissions.');
-      }
+  // Save chat to localStorage whenever messages change
+  useEffect(() => {
+    if (messages.length > 0) {
+      const todayKey = getTodayKey();
+      localStorage.setItem(todayKey, JSON.stringify(messages));
     }
+  }, [messages]);
+
+  const initializeChat = () => {
+    setMessages([{
+      type: 'ai',
+      content: "Hey there! 👋 I'm here to listen. How are you feeling today? Share whatever's on your mind...",
+      timestamp: new Date()
+    }]);
   };
 
-  const stopRecording = async () => {
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
-      mediaRecorderRef.current.stop();
-      
-      // Wait for the recording to finish and process it
-      mediaRecorderRef.current.onstop = async () => {
-        if (processingRef.current) {
-          return; // Prevent duplicate processing
-        }
-        
-        processingRef.current = true;
-        
-        // Wait a moment for speech recognition to finish processing
-        setTimeout(async () => {
-          console.log('Checking transcription results...');
-          
-          // Check if we have any transcription from browser speech recognition
-          let currentTranscription = '';
-          setTranscription(current => {
-            currentTranscription = current || '';
-            return current;
+  // Auto-scroll to bottom when new messages arrive
+  const scrollToBottom = () => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  };
+
+  useEffect(() => {
+    scrollToBottom();
+  }, [messages]);
+
+  // Auto-resize textarea
+  useEffect(() => {
+    if (textareaRef.current) {
+      textareaRef.current.style.height = 'auto';
+      textareaRef.current.style.height = Math.min(textareaRef.current.scrollHeight, 150) + 'px';
+    }
+  }, [textInput]);
+
+  const extractActionableItems = (aiData, userMessage) => {
+    const actions = [];
+    
+    // Extract tasks from suggestions
+    if (aiData.suggestions && aiData.suggestions.length > 0) {
+      aiData.suggestions.forEach((suggestion) => {
+        // Check if suggestion sounds like a task
+        if (suggestion.toLowerCase().includes('try') || 
+            suggestion.toLowerCase().includes('consider') ||
+            suggestion.toLowerCase().includes('practice') ||
+            suggestion.toLowerCase().includes('take') ||
+            suggestion.toLowerCase().includes('do')) {
+          actions.push({
+            type: 'task',
+            title: suggestion,
+            icon: CheckSquare,
+            color: 'bg-blue-50 dark:bg-blue-900/20 border-blue-300 dark:border-blue-700 text-blue-700 dark:text-blue-300'
           });
-          
-          console.log('Current transcription:', currentTranscription);
-          
-          if (currentTranscription.trim()) {
-            console.log('Browser speech recognition successful!');
-            setUsedMicrophone(true); // Mark that microphone was used
-            toast.success('Speech recognition completed!');
-          } else {
-            console.log('No browser speech recognition result, trying server transcription...');
-            
-            if (audioChunksRef.current.length === 0) {
-              toast.error('No audio recorded. Please try again.');
-            } else {
-              // Try server transcription as fallback
-              const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
-              
-              try {
-                toast.loading('Using server transcription...');
-                const transcribeResponse = await apiHelpers.transcribeAudio(audioBlob);
-                const serverTranscription = transcribeResponse.data.transcription;
-                
-                console.log('Server transcription:', serverTranscription.substring(0, 50) + '...');
-                
-                if (serverTranscription.includes('not implemented yet')) {
-                  toast.dismiss();
-                  toast.error('Speech recognition failed. Please type your message manually.');
-                } else {
-                  setTranscription(serverTranscription);
-                  setUsedMicrophone(true); // Mark that microphone was used
-                  toast.dismiss();
-                  toast.success('Server transcription completed!');
-                }
-              } catch (error) {
-                console.error('Server transcription failed:', error);
-                toast.dismiss();
-                toast.error('Speech recognition failed. Please type your message manually.');
-              }
-            }
-          }
-          
-          processingRef.current = false;
-        }, 2000); // Wait 2 seconds for speech recognition to complete
-      };
+        }
+      });
     }
-    
-    // Stop speech recognition safely
-    if (recognitionRef.current) {
-      try {
-        recognitionRef.current.stop();
-      } catch (speechError) {
-        console.warn('Error stopping speech recognition:', speechError);
+
+    // Suggest goal if user mentions long-term aspirations
+    const goalKeywords = ['want to', 'goal', 'achieve', 'become', 'learn', 'improve', 'get better at'];
+    if (goalKeywords.some(keyword => userMessage.toLowerCase().includes(keyword))) {
+      const sentences = userMessage.split(/[.!?]/);
+      const goalSentence = sentences.find(s => 
+        goalKeywords.some(keyword => s.toLowerCase().includes(keyword))
+      );
+      
+      if (goalSentence) {
+        actions.push({
+          type: 'goal',
+          title: goalSentence.trim(),
+          icon: Target,
+          color: 'bg-purple-50 dark:bg-purple-900/20 border-purple-300 dark:border-purple-700 text-purple-700 dark:text-purple-300'
+        });
       }
     }
-    
-    setIsRecording(false);
+
+    // Suggest habit if user mentions daily/regular activities
+    const habitKeywords = ['every day', 'daily', 'routine', 'habit', 'regularly', 'morning', 'evening'];
+    if (habitKeywords.some(keyword => userMessage.toLowerCase().includes(keyword))) {
+      const sentences = userMessage.split(/[.!?]/);
+      const habitSentence = sentences.find(s => 
+        habitKeywords.some(keyword => s.toLowerCase().includes(keyword))
+      );
+      
+      if (habitSentence) {
+        actions.push({
+          type: 'habit',
+          title: habitSentence.trim(),
+          icon: Zap,
+          color: 'bg-green-50 dark:bg-green-900/20 border-green-300 dark:border-green-700 text-green-700 dark:text-green-300'
+        });
+      }
+    }
+
+    return actions;
   };
 
-  const handleSendMessage = async (text = textInput || transcription) => {
-    if (!text.trim()) {
-      toast.error('Please enter or record a message first');
-      return;
-    }
+  const handleSendMessage = async () => {
+    if (!textInput.trim() || loading) return;
 
-    // Check if user is typing (not using transcription)
-    const isTyping = textInput && !transcription;
-    if (isTyping) {
-      setUsedMicrophone(false);
-    }
+    const userMessage = textInput.trim();
+    setTextInput('');
+
+    // Add user message
+    const newUserMessage = {
+      type: 'user',
+      content: userMessage,
+      timestamp: new Date()
+    };
+    setMessages(prev => [...prev, newUserMessage]);
 
     setLoading(true);
-    setAiResponse(null);
-    
+
     try {
-      // Analyze the text with AI
-      const response = await apiHelpers.analyzeText(text.trim());
-      setAiResponse(response.data);
-      
-      // Generate speech for complete AI response
-      try {
-        const completeResponseText = createCompleteResponseText(response.data);
-        const audioResponse = await apiHelpers.textToSpeech(completeResponseText);
-        const audioBlob = new Blob([audioResponse.data], { type: 'audio/mpeg' });
-        const url = URL.createObjectURL(audioBlob);
-        setAudioUrl(url);
-        
-        // Auto-play only if user used microphone
-        if (usedMicrophone) {
-          setTimeout(() => {
-            if (url) {
-              const audio = new Audio(url);
-              audio.play().then(() => {
-                setIsPlaying(true);
-                audio.onended = () => setIsPlaying(false);
-              }).catch(err => {
-                console.warn('Auto-play failed:', err);
-                // Fallback to manual play button
-              });
-            }
-          }, 500); // Small delay to ensure UI is ready
-        }
-      } catch (ttsError) {
-        console.warn('TTS failed, using browser fallback:', ttsError);
-        // Auto-play browser TTS only if user used microphone
-        if (usedMicrophone && response.data) {
-          setTimeout(() => {
-            const completeResponseText = createCompleteResponseText(response.data);
-            const utterance = new SpeechSynthesisUtterance(completeResponseText);
-            utterance.onstart = () => setIsPlaying(true);
-            utterance.onend = () => setIsPlaying(false);
-            speechSynthesis.speak(utterance);
-          }, 500);
-        }
-      }
-      
-      // Clear inputs and reset microphone flag
-      setTextInput('');
-      setTranscription('');
-      setUsedMicrophone(false);
-      
-      toast.success('Analysis complete!');
-    } catch (error) {
-      console.error('Failed to analyze message:', error);
-      
-      // More specific error messages
-      if (error.response?.status === 429) {
-        toast.error('Too many requests. Please wait a moment and try again.');
-      } else if (error.response?.status === 500) {
-        toast.error('Server error. The AI service might be temporarily unavailable.');
-      } else if (error.code === 'NETWORK_ERROR') {
-        toast.error('Network error. Please check your connection.');
+      // Send to AI for analysis
+      const response = await apiHelpers.analyzeText(userMessage);
+      const aiData = response.data;
+
+      // Create a natural, conversational response based on mood
+      let conversationalResponse = '';
+      const moodScore = aiData.mood_score || 5;
+
+      // Empathetic opening based on mood
+      if (moodScore >= 8) {
+        const positiveOpeners = [
+          "That's wonderful to hear! 😊",
+          "I can feel your positive energy! ✨",
+          "Love the enthusiasm! 🌟",
+          "That's amazing! 💫"
+        ];
+        conversationalResponse = positiveOpeners[Math.floor(Math.random() * positiveOpeners.length)] + ' ';
+      } else if (moodScore >= 6) {
+        const neutralOpeners = [
+          "I hear you. ",
+          "Thanks for sharing that. ",
+          "I appreciate you opening up. ",
+          "I'm listening. "
+        ];
+        conversationalResponse = neutralOpeners[Math.floor(Math.random() * neutralOpeners.length)];
+      } else if (moodScore >= 4) {
+        const concernedOpeners = [
+          "I can sense things are a bit tough right now. ",
+          "It sounds like you're going through something. ",
+          "I'm here for you. ",
+          "That sounds challenging. "
+        ];
+        conversationalResponse = concernedOpeners[Math.floor(Math.random() * concernedOpeners.length)];
       } else {
-        toast.error('Failed to analyze your message. Please try again.');
+        const supportiveOpeners = [
+          "I'm really sorry you're feeling this way. 💙",
+          "That sounds really difficult. I'm here with you. ",
+          "Thank you for trusting me with this. ",
+          "You're not alone in this. "
+        ];
+        conversationalResponse = supportiveOpeners[Math.floor(Math.random() * supportiveOpeners.length)];
       }
+
+      // Add the AI's summary/reflection
+      if (aiData.summary) {
+        conversationalResponse += aiData.summary + ' ';
+      }
+
+      // Add consolation/support
+      if (aiData.consolation) {
+        conversationalResponse += '\n\n' + aiData.consolation;
+      }
+
+      // Add motivation if present
+      if (aiData.motivation) {
+        conversationalResponse += '\n\n' + aiData.motivation;
+      }
+
+      // Add suggestions naturally
+      if (aiData.suggestions && aiData.suggestions.length > 0) {
+        conversationalResponse += '\n\n';
+        if (moodScore >= 7) {
+          conversationalResponse += "Here are some ideas to keep the momentum going:\n";
+        } else if (moodScore >= 5) {
+          conversationalResponse += "Some thoughts that might help:\n";
+        } else {
+          conversationalResponse += "A few gentle suggestions:\n";
+        }
+        aiData.suggestions.forEach((suggestion) => {
+          conversationalResponse += `• ${suggestion}\n`;
+        });
+      }
+
+      // Add knowledge nugget as a conversation piece
+      if (aiData.knowledgeNugget) {
+        conversationalResponse += '\n\n💡 ' + aiData.knowledgeNugget;
+      }
+
+      // Add follow-up question to continue conversation
+      const followUpQuestions = [
+        "\n\nHow does that resonate with you?",
+        "\n\nWhat do you think about that?",
+        "\n\nWould you like to talk more about this?",
+        "\n\nIs there anything else on your mind?",
+        "\n\nHow are you feeling about all of this?"
+      ];
+      
+      if (moodScore < 5) {
+        conversationalResponse += "\n\nI'm here if you want to talk more about it. 💙";
+      } else {
+        conversationalResponse += followUpQuestions[Math.floor(Math.random() * followUpQuestions.length)];
+      }
+
+      // Add AI response
+      const aiMessage = {
+        type: 'ai',
+        content: conversationalResponse.trim(),
+        timestamp: new Date(),
+        moodScore: moodScore
+      };
+      setMessages(prev => [...prev, aiMessage]);
+
+      // Extract actionable items
+      const actions = extractActionableItems(aiData, userMessage);
+      if (actions.length > 0) {
+        setSuggestedActions(actions);
+      }
+
+      // Speak only the essential parts (opening + summary + consolation)
+      let speechText = '';
+      if (moodScore >= 8) {
+        speechText = "That's wonderful! ";
+      } else if (moodScore < 5) {
+        speechText = "I'm here for you. ";
+      }
+      if (aiData.summary) {
+        speechText += aiData.summary;
+      }
+      if (aiData.consolation && moodScore < 6) {
+        speechText += ' ' + aiData.consolation;
+      }
+      
+      if (speechText) {
+        speakText(speechText);
+      }
+
+    } catch (error) {
+      console.error('Failed to analyze text:', error);
+      toast.error('Failed to get response. Please try again.');
+      
+      setMessages(prev => [...prev, {
+        type: 'ai',
+        content: "I'm having trouble processing that right now. Could you try again?",
+        timestamp: new Date()
+      }]);
     } finally {
       setLoading(false);
     }
   };
 
-  const playAudio = () => {
-    if (audioUrl && audioRef.current) {
-      audioRef.current.play();
-      setIsPlaying(true);
-    } else if (aiResponse) {
-      // Fallback to browser TTS with complete response
-      const completeResponseText = createCompleteResponseText(aiResponse);
-      const utterance = new SpeechSynthesisUtterance(completeResponseText);
-      utterance.onstart = () => setIsPlaying(true);
-      utterance.onend = () => setIsPlaying(false);
-      speechSynthesis.speak(utterance);
+  const handleCreateAction = async (action) => {
+    try {
+      if (action.type === 'task') {
+        await apiHelpers.createTask({
+          title: action.title,
+          priority: 'medium'
+        });
+        toast.success('✓ Task created!');
+      } else if (action.type === 'goal') {
+        await apiHelpers.createGoal({
+          title: action.title,
+          category: 'personal'
+        });
+        toast.success('🎯 Goal created!');
+      } else if (action.type === 'habit') {
+        await apiHelpers.createHabit({
+          name: action.title,
+          frequency: 'daily'
+        });
+        toast.success('⚡ Habit created!');
+      }
+
+      // Remove the action from suggestions
+      setSuggestedActions(prev => prev.filter(a => a !== action));
+
+      // Add confirmation message
+      setMessages(prev => [...prev, {
+        type: 'ai',
+        content: `Great! I've added that ${action.type} for you. You can view and manage it in your ${action.type === 'task' ? 'Tasks' : action.type === 'goal' ? 'Goals' : 'Habits'} page. 👍`,
+        timestamp: new Date()
+      }]);
+
+    } catch (error) {
+      console.error(`Failed to create ${action.type}:`, error);
+      toast.error(`Failed to create ${action.type}`);
     }
   };
 
-  const stopAudio = () => {
-    if (audioRef.current) {
-      audioRef.current.pause();
-      audioRef.current.currentTime = 0;
+  const speakText = (text) => {
+    if ('speechSynthesis' in window) {
+      window.speechSynthesis.cancel();
+      
+      const utterance = new SpeechSynthesisUtterance(text);
+      utterance.rate = 0.95;
+      utterance.pitch = 1;
+      utterance.volume = 0.8;
+      
+      const voices = window.speechSynthesis.getVoices();
+      const preferredVoice = voices.find(voice => 
+        voice.name.includes('Female') || 
+        voice.name.includes('Samantha') ||
+        voice.name.includes('Karen')
+      );
+      if (preferredVoice) {
+        utterance.voice = preferredVoice;
+      }
+      
+      window.speechSynthesis.speak(utterance);
     }
-    speechSynthesis.cancel();
-    setIsPlaying(false);
+  };
+
+  const handleKeyPress = (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      handleSendMessage();
+    }
+  };
+
+  const getMoodEmoji = (score) => {
+    if (score >= 9) return '😄';
+    if (score >= 7) return '😊';
+    if (score >= 5) return '😐';
+    if (score >= 3) return '😔';
+    return '😢';
   };
 
   return (
-    <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-      <div className="text-center mb-8">
-        <h1 className="text-3xl font-bold text-gray-900 dark:text-gray-100 mb-2">
-          Daily Check-in
-        </h1>
-        <p className="text-gray-600 dark:text-gray-400">
-          Share how your day went. I'm here to listen and help.
-        </p>
-      </div>
-
-      <div className="max-w-2xl mx-auto">
-        {/* Input Section */}
-        <div className="card mb-6 fade-in-up accent-dot">
-          <div className="space-y-4">
-            {/* Voice Recording */}
-            <div className="text-center">
-              <button
-                onClick={isRecording ? stopRecording : startRecording}
-                disabled={loading}
-                className={`p-4 rounded-full transition-all duration-300 mic-button floating ${
-                  isRecording
-                    ? 'bg-red-500 text-white recording-pulse'
-                    : 'bg-gray-900 dark:bg-gray-100 text-white dark:text-gray-900 hover:bg-gray-800 dark:hover:bg-gray-200'
-                } disabled:opacity-50 disabled:cursor-not-allowed`}
-              >
-                {isRecording ? <MicOff className="w-8 h-8" /> : <Mic className="w-8 h-8" />}
-              </button>
-              <p className="text-sm text-gray-600 dark:text-gray-400 mt-2">
-                {isRecording ? 'Recording... Click to stop' : 'Click to start recording'}
-              </p>
-            </div>
-
-            {/* Text Input */}
-            <div className="relative">
-              <textarea
-                value={transcription || textInput}
-                onChange={(e) => {
-                  if (!transcription) {
-                    setTextInput(e.target.value);
-                  }
-                }}
-                placeholder="Or type how your day went..."
-                className="w-full min-h-32 px-4 py-3 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-gray-500 focus:border-transparent resize-none bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500"
-                disabled={loading || isRecording}
-              />
-              {transcription && (
-                <button
-                  onClick={() => setTranscription('')}
-                  className="absolute top-2 right-2 text-sm text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300"
-                >
-                  Clear
-                </button>
-              )}
-            </div>
-
-            {/* Send Button */}
-            <div className="flex justify-center">
-              <button
-                onClick={() => handleSendMessage()}
-                disabled={loading || (!textInput && !transcription) || isRecording}
-                className="btn-primary px-8 py-3 flex items-center space-x-2"
-              >
-                {loading ? (
-                  <>
-                    <div className="w-4 h-4 loading-spinner"></div>
-                    <span>Analyzing...</span>
-                  </>
-                ) : (
-                  <>
-                    <Send className="w-4 h-4" />
-                    <span>Send to AI Friend</span>
-                  </>
-                )}
-              </button>
-            </div>
+    <div className="flex flex-col h-screen bg-gray-50 dark:bg-gray-950">
+      {/* Header */}
+      <div className="bg-white dark:bg-gray-900 border-b border-gray-200 dark:border-gray-800 px-6 py-4 flex-shrink-0">
+        <div className="max-w-4xl mx-auto flex items-center space-x-3">
+          <div className="w-10 h-10 bg-gray-900 dark:bg-gray-100 rounded-full flex items-center justify-center">
+            <Sparkles className="w-5 h-5 text-white dark:text-gray-900" />
+          </div>
+          <div>
+            <h1 className="text-xl font-semibold text-gray-900 dark:text-gray-100">
+              Daily Journal
+            </h1>
+            <p className="text-sm text-gray-600 dark:text-gray-400">
+              {new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}
+            </p>
           </div>
         </div>
+      </div>
 
-        {/* AI Response */}
-        {aiResponse && (
-          <div className="card fade-in-up gentle-float accent-dot">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
-                Your AI Friend's Response
-              </h3>
-              <div className="flex space-x-2">
-                <button
-                  onClick={isPlaying ? stopAudio : playAudio}
-                  className="p-2 rounded-lg bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700"
-                >
-                  {isPlaying ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
-                </button>
-              </div>
-            </div>
-
-            <div className="space-y-6">
-              {/* Summary */}
-              <div>
-                <h4 className="font-medium text-gray-900 dark:text-gray-100 mb-2">Summary</h4>
-                <p className="text-gray-700 dark:text-gray-300 leading-relaxed">
-                  {aiResponse.summary}
-                </p>
-              </div>
-
-              {/* Consolation */}
-              {aiResponse.consolation && (
-                <div>
-                  <h4 className="font-medium text-gray-900 dark:text-gray-100 mb-2">Support</h4>
-                  <p className="text-gray-700 dark:text-gray-300 leading-relaxed">
-                    {aiResponse.consolation}
-                  </p>
-                </div>
-              )}
-
-              {/* Suggestions */}
-              <div>
-                <h4 className="font-medium text-gray-900 dark:text-gray-100 mb-2">Suggestions for Tomorrow</h4>
-                <ul className="space-y-2">
-                  {aiResponse.suggestions?.map((suggestion, index) => (
-                    <li key={index} className="flex items-start space-x-2">
-                      <span className="text-gray-400 dark:text-gray-500 mt-1">•</span>
-                      <span className="text-gray-700 dark:text-gray-300">{suggestion}</span>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-
-              {/* Mood Score */}
-              <div className="flex items-center justify-between p-4 bg-gray-50 dark:bg-gray-800 rounded-lg">
-                <span className="font-medium text-gray-900 dark:text-gray-100">Mood Score</span>
-                <div className="flex items-center space-x-2">
-                  <span className="text-2xl font-bold text-gray-900 dark:text-gray-100">
-                    {aiResponse.moodScore}/10
-                  </span>
-                  <div className="w-20 h-2 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
-                    <div
-                      className="h-full bg-gray-900 dark:bg-gray-100 transition-all duration-300"
-                      style={{ width: `${(aiResponse.moodScore / 10) * 100}%` }}
-                    />
+      {/* Messages Area */}
+      <div className="flex-1 overflow-y-auto px-4 py-6">
+        <div className="max-w-4xl mx-auto space-y-4 pb-4">
+          {messages.map((message, index) => (
+            <div
+              key={index}
+              className={`flex ${message.type === 'user' ? 'justify-end' : 'justify-start'} fade-in-up`}
+              style={{ animationDelay: `${index * 50}ms` }}
+            >
+              <div
+                className={`max-w-[85%] rounded-2xl px-5 py-3 ${
+                  message.type === 'user'
+                    ? 'bg-gray-900 dark:bg-gray-100 text-white dark:text-gray-900'
+                    : 'bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 border border-gray-200 dark:border-gray-700 shadow-sm'
+                }`}
+              >
+                {message.type === 'ai' && message.moodScore && (
+                  <div className="flex items-center space-x-2 mb-3 pb-2 border-b border-gray-200 dark:border-gray-700">
+                    <span className="text-2xl">{getMoodEmoji(message.moodScore)}</span>
+                    <span className="text-xs font-medium text-gray-500 dark:text-gray-400">
+                      Mood: {message.moodScore}/10
+                    </span>
                   </div>
-                </div>
-              </div>
-
-              {/* Motivation */}
-              <div className="p-4 bg-gradient-to-r from-gray-100 to-gray-200 dark:from-gray-800 dark:to-gray-700 rounded-lg">
-                <h4 className="font-medium text-gray-900 dark:text-gray-100 mb-2">Motivation</h4>
-                <p className="text-gray-700 dark:text-gray-300 italic">
-                  "{aiResponse.motivation}"
+                )}
+                <p className="whitespace-pre-wrap text-[15px] leading-relaxed">
+                  {message.content}
+                </p>
+                <p className={`text-xs mt-2 ${
+                  message.type === 'user' 
+                    ? 'text-gray-300 dark:text-gray-600' 
+                    : 'text-gray-400 dark:text-gray-500'
+                }`}>
+                  {message.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                 </p>
               </div>
-
-              {/* Knowledge Nugget */}
-              {aiResponse.knowledgeNugget && (
-                <div className="border-l-4 border-gray-300 dark:border-gray-600 pl-4">
-                  <h4 className="font-medium text-gray-900 dark:text-gray-100 mb-2">💡 Did You Know?</h4>
-                  <p className="text-gray-700 dark:text-gray-300 text-sm">
-                    {aiResponse.knowledgeNugget}
-                  </p>
-                </div>
-              )}
             </div>
-          </div>
-        )}
+          ))}
+          
+          {/* Suggested Actions */}
+          {suggestedActions.length > 0 && (
+            <div className="flex justify-start fade-in-up">
+              <div className="max-w-[85%] space-y-3">
+                <p className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2 flex items-center">
+                  <Sparkles className="w-4 h-4 mr-2" />
+                  Would you like me to add these for you?
+                </p>
+                {suggestedActions.map((action, index) => {
+                  const Icon = action.icon;
+                  return (
+                    <button
+                      key={index}
+                      onClick={() => handleCreateAction(action)}
+                      className={`w-full flex items-center justify-between p-4 rounded-xl border-2 ${action.color} hover:scale-[1.02] active:scale-[0.98] transition-all duration-200 shadow-sm hover:shadow-md`}
+                    >
+                      <div className="flex items-center space-x-3 flex-1 text-left min-w-0">
+                        <Icon className="w-5 h-5 flex-shrink-0" />
+                        <div className="flex-1 min-w-0">
+                          <p className="text-xs font-bold uppercase tracking-wider opacity-75 mb-0.5">
+                            {action.type}
+                          </p>
+                          <p className="text-sm font-medium leading-snug">
+                            {action.title}
+                          </p>
+                        </div>
+                      </div>
+                      <Plus className="w-5 h-5 flex-shrink-0 ml-3" />
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+          
+          {loading && (
+            <div className="flex justify-start fade-in-up">
+              <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl px-5 py-3 shadow-sm">
+                <div className="flex items-center space-x-2">
+                  <div className="flex space-x-1">
+                    <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }}></div>
+                    <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }}></div>
+                    <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }}></div>
+                  </div>
+                  <span className="text-sm text-gray-500 dark:text-gray-400">Thinking...</span>
+                </div>
+              </div>
+            </div>
+          )}
+          
+          <div ref={messagesEndRef} />
+        </div>
+      </div>
 
-        {/* Audio element for TTS */}
-        {audioUrl && (
-          <audio
-            ref={audioRef}
-            src={audioUrl}
-            onEnded={() => setIsPlaying(false)}
-            onPlay={() => setIsPlaying(true)}
-            onPause={() => setIsPlaying(false)}
-            style={{ display: 'none' }}
-          />
-        )}
+      {/* Input Area */}
+      <div className="bg-white dark:bg-gray-900 border-t border-gray-200 dark:border-gray-800 px-4 py-4 flex-shrink-0 shadow-lg">
+        <div className="max-w-4xl mx-auto">
+          <div className="flex items-end space-x-3">
+            <div className="flex-1 relative">
+              <textarea
+                ref={textareaRef}
+                value={textInput}
+                onChange={(e) => setTextInput(e.target.value)}
+                onKeyPress={handleKeyPress}
+                placeholder="Share your thoughts, feelings, or what happened today..."
+                className="w-full px-5 py-3 rounded-2xl border-2 border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 placeholder-gray-500 dark:placeholder-gray-400 focus:outline-none focus:border-gray-900 dark:focus:border-gray-100 resize-none min-h-[56px] transition-all text-[15px]"
+                rows="1"
+                disabled={loading}
+              />
+            </div>
+            <button
+              onClick={handleSendMessage}
+              disabled={!textInput.trim() || loading}
+              className="p-4 rounded-full bg-gray-900 dark:bg-gray-100 text-white dark:text-gray-900 hover:scale-110 active:scale-95 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100 shadow-lg hover:shadow-xl"
+            >
+              <Send className="w-5 h-5" />
+            </button>
+          </div>
+          <p className="text-xs text-gray-500 dark:text-gray-400 mt-2.5 text-center">
+            Press <kbd className="px-1.5 py-0.5 bg-gray-200 dark:bg-gray-700 rounded text-xs">Enter</kbd> to send • <kbd className="px-1.5 py-0.5 bg-gray-200 dark:bg-gray-700 rounded text-xs">Shift+Enter</kbd> for new line
+          </p>
+        </div>
       </div>
     </div>
   );

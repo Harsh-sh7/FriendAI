@@ -8,6 +8,8 @@ import Dashboard from './pages/Dashboard';
 import Chat from './pages/Chat';
 import Tasks from './pages/Tasks';
 import MoodAnalytics from './pages/MoodAnalytics';
+import Goals from './pages/Goals';
+import Habits from './pages/Habits';
 import Login from './pages/Login';
 import Register from './pages/Register';
 import LoadingSpinner from './components/LoadingSpinner';
@@ -127,6 +129,26 @@ function App() {
                   <ProtectedRoute>
                     <AppLayout>
                       <MoodAnalytics />
+                    </AppLayout>
+                  </ProtectedRoute>
+                } 
+              />
+              <Route 
+                path="/goals" 
+                element={
+                  <ProtectedRoute>
+                    <AppLayout>
+                      <Goals />
+                    </AppLayout>
+                  </ProtectedRoute>
+                } 
+              />
+              <Route 
+                path="/habits" 
+                element={
+                  <ProtectedRoute>
+                    <AppLayout>
+                      <Habits />
                     </AppLayout>
                   </ProtectedRoute>
                 } 

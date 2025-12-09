@@ -8,8 +8,27 @@ import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import axios from 'axios';
 import FormData from 'form-data';
-import { createClient } from '@supabase/supabase-js';
 import { GoogleGenerativeAI } from '@google/generative-ai';
+import mongoose from 'mongoose';
+import { User, JournalEntry, Task } from './models.js';
+import { storage } from './storage.js';
+
+// Helper to convert string ID to ObjectId
+const toObjectId = (id) => {
+  try {
+    return new mongoose.Types.ObjectId(id);
+  } catch (error) {
+    return id; // Return as-is if conversion fails
+  }
+};
+
+// Helper to safely get ISO string from date
+const toISOString = (date) => {
+  if (!date) return null;
+  if (typeof date === 'string') return date;
+  if (date instanceof Date) return date.toISOString();
+  return String(date);
+};
 
 // Load environment variables
 dotenv.config();
@@ -17,11 +36,36 @@ dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-// Initialize Supabase client
-const supabase = createClient(
-  process.env.SUPABASE_URL || '',
-  process.env.SUPABASE_ANON_KEY || ''
-);
+// In-memory storage fallback
+let isMongoConnected = false;
+const inMemoryStorage = {
+  users: new Map(),
+  journalEntries: new Map(),
+  tasks: new Map()
+};
+
+// Initialize MongoDB connection
+const connectDB = async () => {
+  try {
+    await mongoose.connect(process.env.MONGODB_URI, {
+      serverSelectionTimeoutMS: 5000,
+      socketTimeoutMS: 45000,
+    });
+    console.log('✅ MongoDB connected successfully');
+    isMongoConnected = true;
+    storage.setMongoStatus(true);
+  } catch (error) {
+    console.error('❌ MongoDB connection error:', error.message);
+    console.log('⚠️  Running in FALLBACK MODE with in-memory storage');
+    console.log('⚠️  Data will NOT persist after server restart');
+    isMongoConnected = false;
+    storage.setMongoStatus(false);
+    // Don't exit - continue with in-memory storage
+  }
+};
+
+// Connect to MongoDB (non-blocking)
+connectDB();
 
 // Initialize Gemini AI
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
@@ -62,9 +106,9 @@ app.use('/api/auth/', authLimiter);
 app.use('/api/ai/', aiLimiter);
 
 // Configure multer for audio uploads
-const storage = multer.memoryStorage();
+const multerStorage = multer.memoryStorage();
 const upload = multer({
-  storage: storage,
+  storage: multerStorage,
   limits: { 
     fileSize: 10 * 1024 * 1024, // 10MB
     files: 1
@@ -169,11 +213,7 @@ app.post('/api/auth/register', async (req, res) => {
     }
 
     // Check if user exists
-    const { data: existingUser } = await supabase
-      .from('users')
-      .select('id')
-      .eq('email', email.toLowerCase())
-      .single();
+    const existingUser = await storage.findUser({ email: email.toLowerCase() });
 
     if (existingUser) {
       return res.status(400).json({ error: 'User already exists' });
@@ -183,27 +223,25 @@ app.post('/api/auth/register', async (req, res) => {
     const hashedPassword = await hashPassword(password);
 
     // Create user
-    const { data: newUser, error } = await supabase
-      .from('users')
-      .insert([{
-        email: email.toLowerCase(),
-        password: hashedPassword,
-        name,
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString()
-      }])
-      .select()
-      .single();
-
-    if (error) {
-      throw error;
-    }
+    const newUser = await storage.createUser({
+      email: email.toLowerCase(),
+      password: hashedPassword,
+      name,
+      created_at: new Date(),
+      updated_at: new Date()
+    });
 
     // Generate token
-    const token = generateToken(newUser.id);
+    const token = generateToken(newUser._id.toString());
 
     // Return user without password
-    const { password: _, ...userWithoutPassword } = newUser;
+    const userWithoutPassword = {
+      id: newUser._id,
+      email: newUser.email,
+      name: newUser.name,
+      created_at: newUser.created_at,
+      updated_at: newUser.updated_at
+    };
 
     res.status(201).json({
       token,
@@ -226,13 +264,9 @@ app.post('/api/auth/login', async (req, res) => {
     }
 
     // Get user
-    const { data: user, error } = await supabase
-      .from('users')
-      .select('*')
-      .eq('email', email.toLowerCase())
-      .single();
+    const user = await storage.findUser({ email: email.toLowerCase() });
 
-    if (error || !user) {
+    if (!user) {
       return res.status(401).json({ error: 'Invalid credentials' });
     }
 
@@ -244,16 +278,19 @@ app.post('/api/auth/login', async (req, res) => {
     }
 
     // Update last login
-    await supabase
-      .from('users')
-      .update({ updated_at: new Date().toISOString() })
-      .eq('id', user.id);
+    await storage.updateUser(user._id, { updated_at: new Date() });
 
     // Generate token
-    const token = generateToken(user.id);
+    const token = generateToken(user._id.toString());
 
     // Return user without password
-    const { password: _, ...userWithoutPassword } = user;
+    const userWithoutPassword = {
+      id: user._id,
+      email: user.email,
+      name: user.name,
+      created_at: user.created_at,
+      updated_at: user.updated_at
+    };
 
     res.json({
       token,
@@ -272,7 +309,7 @@ app.get('/api/auth/me', authenticateToken, (req, res) => {
   res.json({ user: userWithoutPassword });
 });
 
-// Speech-to-Text Route using OpenAI Whisper
+// Speech-to-Text Route - Browser-based only (free)
 app.post('/api/ai/transcribe', authenticateToken, upload.single('audio'), async (req, res) => {
   try {
     if (!req.file) {
@@ -280,107 +317,22 @@ app.post('/api/ai/transcribe', authenticateToken, upload.single('audio'), async 
     }
 
     console.log('Audio file received:', {
-      originalName: req.file.originalname,
-      mimeType: req.file.mimetype,
-      size: req.file.buffer.length
+      size: `${Math.round(req.file.buffer.length / 1024)}KB`,
+      type: req.file.mimetype
     });
 
-    // Use ElevenLabs Speech-to-Text API
-    try {
-      console.log('Attempting speech-to-text with ElevenLabs API...');
-      
-      if (!process.env.ELEVENLABS_API_KEY) {
-        throw new Error('ElevenLabs API key not configured');
-      }
-      
-      // Create form data for ElevenLabs API
-      const formData = new FormData();
-      
-      // Add the audio file to form data with correct field name
-      formData.append('file', req.file.buffer, {
-        filename: 'audio.webm',
-        contentType: req.file.mimetype
-      });
-      
-      // Add model_id parameter (ElevenLabs format)
-      formData.append('model_id', 'scribe_v1');
-      
-      // Use ElevenLabs Speech-to-Text endpoint (correct endpoint)
-      const speechResponse = await axios.post(
-        'https://api.elevenlabs.io/v1/speech-to-text',
-        formData,
-        {
-          headers: {
-            ...formData.getHeaders(),
-            'xi-api-key': process.env.ELEVENLABS_API_KEY
-          },
-          timeout: 30000
-        }
-      );
-
-      console.log('ElevenLabs Speech API response:', speechResponse.data);
-      
-      if (speechResponse.data && speechResponse.data.text) {
-        const transcript = speechResponse.data.text.trim();
-        console.log('ElevenLabs speech-to-text successful:', transcript);
-        
-        res.json({
-          transcription: transcript,
-          confidence: 0.95, // ElevenLabs is quite accurate
-          audioLength: `${Math.round(req.file.buffer.length / 1024)}KB`,
-          method: 'ElevenLabs Speech-to-Text'
-        });
-      } else {
-        console.log('No speech detected by ElevenLabs');
-        res.json({
-          transcription: "No speech detected in the audio. Please try speaking more clearly or check your microphone.",
-          confidence: 0.0,
-          audioLength: `${Math.round(req.file.buffer.length / 1024)}KB`,
-          method: 'ElevenLabs Speech-to-Text'
-        });
-      }
-
-    } catch (speechError) {
-      console.error('ElevenLabs Speech API error:', speechError.response?.data || speechError.message);
-      
-      // Provide helpful error messages
-      let errorMessage = 'Speech transcription failed';
-      if (speechError.response?.status === 401) {
-        errorMessage = 'Invalid ElevenLabs API key. Please check your configuration.';
-      } else if (speechError.response?.status === 429) {
-        errorMessage = 'ElevenLabs API rate limit exceeded. Please wait a moment.';
-      } else if (speechError.response?.status === 400) {
-        errorMessage = 'Invalid audio format. Please try recording again.';
-      }
-      
-      // Fallback: Use intelligent mock responses
-      const audioSize = req.file.buffer.length;
-      const mockResponses = [
-        "Hello, this is a test of the speech recognition system.",
-        "Today has been a great day and I wanted to share my thoughts.",
-        "I'm feeling good about the progress we're making on this project.",
-        "Thank you for listening to what I have to say.",
-        "This audio transcription feature is working well."
-      ];
-      
-      const responseIndex = audioSize % mockResponses.length;
-      const mockTranscript = mockResponses[responseIndex];
-      
-      console.log('Using fallback transcription:', mockTranscript);
-      
-      res.json({
-        transcription: mockTranscript,
-        confidence: 0.8,
-        audioLength: `${Math.round(req.file.buffer.length / 1024)}KB`,
-        method: 'Fallback (ElevenLabs unavailable)',
-        note: `ElevenLabs API error: ${errorMessage}`,
-        fallback: true
-      });
-    }
+    // We don't actually transcribe on server - browser does it
+    // This endpoint just acknowledges receipt
+    res.json({
+      transcription: '',
+      message: 'Please use browser speech recognition or type your message',
+      method: 'Browser-based (free)',
+      audioReceived: true
+    });
 
   } catch (error) {
-    console.error('Transcription error:', error);
-    res.status(500).json({ error: 'Transcription failed' });
+    console.error('Error:', error);
+    res.status(500).json({ error: 'Failed to process audio' });
   }
 });
 
@@ -395,7 +347,7 @@ app.post('/api/ai/analyze', authenticateToken, async (req, res) => {
 
     console.log('Analyzing journal entry with Gemini AI...');
 
-    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+    const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
 
     const prompt = `You are an empathetic AI wellness companion and personal friend. Analyze this daily journal entry and provide supportive insights.
 
@@ -501,17 +453,15 @@ Respond with only the JSON object:`;
     }
 
     // Save journal entry to database
-    const { error: journalError } = await supabase
-      .from('journal_entries')
-      .insert([{
-        user_id: req.user.id,
+    try {
+      await storage.createJournalEntry({
+        user_id: toObjectId(req.user.id),
         transcription,
         ai_response: parsedResponse,
         mood_score: parsedResponse.moodScore,
-        created_at: new Date().toISOString()
-      }]);
-
-    if (journalError) {
+        created_at: new Date()
+      });
+    } catch (journalError) {
       console.error('Failed to save journal entry:', journalError);
     }
 
@@ -523,7 +473,7 @@ Respond with only the JSON object:`;
   }
 });
 
-// Text-to-Speech Route
+// Text-to-Speech Route - Browser TTS Only
 app.post('/api/ai/speak', authenticateToken, async (req, res) => {
   try {
     const { text } = req.body;
@@ -532,104 +482,46 @@ app.post('/api/ai/speak', authenticateToken, async (req, res) => {
       return res.status(400).json({ error: 'Text is required' });
     }
 
-    const elevenLabsApiKey = process.env.ELEVENLABS_API_KEY;
-    
-    if (!elevenLabsApiKey) {
-      return res.status(503).json({ 
-        error: 'TTS service not available',
-        fallback: true,
-        message: 'Please use browser text-to-speech'
-      });
-    }
-
-    // Use full text for better experience (ElevenLabs can handle longer text)
-    const processedText = text.length > 2000 ? text.substring(0, 2000) + '...' : text;
-
-    console.log(`Generating TTS for: ${processedText.substring(0, 100)}...`);
-
-    // Using Rachel voice (high-quality, warm, friendly female voice)
-    const response = await axios.post(
-      'https://api.elevenlabs.io/v1/text-to-speech/21m00Tcm4TlvDq8ikWAM',
-      {
-        text: processedText,
-        model_id: 'eleven_multilingual_v2', // Better model for more natural speech
-        voice_settings: {
-          stability: 0.75,    // Higher stability for more consistent voice
-          similarity_boost: 0.85, // Higher for better voice quality
-          style: 0.15,       // Slight style for more expressive speech
-          use_speaker_boost: true
-        }
-      },
-      {
-        headers: {
-          'Accept': 'audio/mpeg',
-          'Content-Type': 'application/json',
-          'xi-api-key': elevenLabsApiKey
-        },
-        responseType: 'arraybuffer',
-        timeout: 15000
-      }
-    );
-
-    res.set({
-      'Content-Type': 'audio/mpeg',
-      'Content-Length': response.data.length,
-      'Cache-Control': 'no-cache'
+    // Return fallback response - client will use browser TTS
+    return res.status(200).json({ 
+      fallback: true,
+      message: 'Using browser text-to-speech',
+      text: text
     });
-    
-    res.send(response.data);
 
   } catch (error) {
     console.error('TTS error:', error);
-    
-    if (error.code === 'ENOTFOUND' || error.response?.status === 401) {
-      res.status(503).json({ 
-        error: 'TTS service temporarily unavailable',
-        fallback: true,
-        message: 'Using browser fallback for speech synthesis'
-      });
-    } else if (error.response?.status === 429) {
-      res.status(429).json({ 
-        error: 'TTS rate limit exceeded',
-        fallback: true,
-        message: 'Please wait before trying again'
-      });
-    } else {
-      res.status(500).json({ 
-        error: 'Text-to-speech failed',
-        fallback: true,
-        message: 'Using browser fallback'
-      });
-    }
+    res.status(500).json({ 
+      error: 'Text-to-speech failed',
+      fallback: true,
+      message: 'Using browser fallback'
+    });
   }
 });
 
 // Dashboard Route
 app.get('/api/dashboard', authenticateToken, async (req, res) => {
   try {
-    const userId = req.user.id;
+    const userId = toObjectId(req.user.id);
 
     // Get journal entries
-    const { data: journalEntries } = await supabase
-      .from('journal_entries')
-      .select('*')
-      .eq('user_id', userId)
-      .order('created_at', { ascending: false });
+    const journalEntries = await storage.findJournalEntries(
+      { user_id: userId },
+      { sort: { created_at: -1 } }
+    );
 
     // Get tasks
-    const { data: tasks } = await supabase
-      .from('tasks')
-      .select('*')
-      .eq('user_id', userId)
-      .order('due_date', { ascending: true });
+    const tasks = await storage.findTasks(
+      { user_id: userId },
+      { sort: { due_date: 1 } }
+    );
 
     // Simple approach: use journal entries to track task completions
     // We'll store task completion events as special journal entries
-    const { data: completionEntries } = await supabase
-      .from('journal_entries')
-      .select('*')
-      .eq('user_id', userId)
-      .like('transcription', 'TASK_COMPLETED:%');
+    const completionEntries = await storage.findJournalEntries({
+      user_id: userId,
+      transcription: { $regex: '^TASK_COMPLETED:' }
+    });
     
     const completedTasksCount = (completionEntries?.length || 0) + (tasks?.filter(task => task.completed).length || 0);
 
@@ -649,7 +541,7 @@ app.get('/api/dashboard', authenticateToken, async (req, res) => {
     // Calculate streak (only for real journal entries, not task completions)
     const today = new Date().toISOString().split('T')[0];
     const hasEntryToday = realJournalEntries?.some(entry => 
-      entry.created_at.split('T')[0] === today
+      toISOString(entry.created_at).split('T')[0] === today
     ) || false;
 
     let currentStreak = 0;
@@ -660,11 +552,11 @@ app.get('/api/dashboard', authenticateToken, async (req, res) => {
       let checkDate = new Date(today);
       
       for (let i = 0; i < sortedEntries.length; i++) {
-        const entryDate = sortedEntries[i].created_at.split('T')[0];
+        const entryDate = toISOString(sortedEntries[i].created_at).split('T')[0];
         const checkDateStr = checkDate.toISOString().split('T')[0];
         
         if (entryDate === checkDateStr) {
-          if (i === 0 || entryDate !== sortedEntries[i-1]?.created_at.split('T')[0]) {
+          if (i === 0 || entryDate !== toISOString(sortedEntries[i-1]?.created_at).split('T')[0]) {
             currentStreak = i + 1;
           }
           checkDate.setDate(checkDate.getDate() - 1);
@@ -682,7 +574,7 @@ app.get('/api/dashboard', authenticateToken, async (req, res) => {
       const dateStr = date.toISOString().split('T')[0];
       
       const dayEntry = realJournalEntries?.find(entry => 
-        entry.created_at.split('T')[0] === dateStr
+        toISOString(entry.created_at).split('T')[0] === dateStr
       );
       
       last7Days.push({
@@ -695,22 +587,159 @@ app.get('/api/dashboard', authenticateToken, async (req, res) => {
 
     // Get upcoming tasks (next 3 days)
     const upcomingTasks = tasks?.filter(task => {
+      if (!task.due_date) return false;
       const taskDate = new Date(task.due_date);
       const threeDaysFromNow = new Date();
       threeDaysFromNow.setDate(threeDaysFromNow.getDate() + 3);
       return taskDate <= threeDaysFromNow && !task.completed;
     }).slice(0, 5) || [];
 
+    // Get active goals
+    const goals = await storage.findGoals(
+      { user_id: userId, status: 'active' },
+      { sort: { created_at: -1 } }
+    );
+
+    // Get active habits
+    const habits = await storage.findHabits(
+      { user_id: userId, active: true },
+      { sort: { created_at: -1 } }
+    );
+
+    // Calculate habit completion rate for today
+    const todayStr = new Date().toISOString().split('T')[0];
+    const habitsCompletedToday = habits?.filter(habit => 
+      habit.completions?.some(c => new Date(c.date).toISOString().split('T')[0] === todayStr)
+    ).length || 0;
+    const totalActiveHabits = habits?.length || 0;
+
+    // Calculate overall progress
+    const activeGoalsCount = goals?.length || 0;
+    const averageGoalProgress = activeGoalsCount > 0
+      ? goals.reduce((sum, goal) => sum + (goal.progress || 0), 0) / activeGoalsCount
+      : 0;
+
+    // Generate AI-powered insights
+    const insights = [];
+    
+    // Mood-based insights
+    if (averageMood >= 7) {
+      insights.push({
+        type: 'positive',
+        icon: '🌟',
+        title: 'Great Mood Trend',
+        message: `Your average mood is ${averageMood.toFixed(1)}/10. Keep up the positive energy!`
+      });
+    } else if (averageMood < 5 && averageMood > 0) {
+      insights.push({
+        type: 'suggestion',
+        icon: '💙',
+        title: 'Self-Care Reminder',
+        message: `Your mood has been lower recently. Consider taking time for activities you enjoy.`
+      });
+    }
+
+    // Streak insights
+    if (currentStreak >= 7) {
+      insights.push({
+        type: 'achievement',
+        icon: '🔥',
+        title: 'Amazing Streak!',
+        message: `${currentStreak} days of consistent journaling. You're building great habits!`
+      });
+    } else if (currentStreak === 0 && totalSessions > 0) {
+      insights.push({
+        type: 'reminder',
+        icon: '📝',
+        title: 'Check-in Reminder',
+        message: `Haven't checked in today. A few minutes of reflection can make a big difference.`
+      });
+    }
+
+    // Habit insights
+    if (totalActiveHabits > 0) {
+      const completionRate = (habitsCompletedToday / totalActiveHabits) * 100;
+      if (completionRate === 100) {
+        insights.push({
+          type: 'achievement',
+          icon: '✨',
+          title: 'All Habits Complete!',
+          message: `You've completed all ${totalActiveHabits} habits today. Excellent work!`
+        });
+      } else if (completionRate > 0) {
+        insights.push({
+          type: 'progress',
+          icon: '⚡',
+          title: 'Habit Progress',
+          message: `${habitsCompletedToday}/${totalActiveHabits} habits completed today. Keep going!`
+        });
+      }
+    }
+
+    // Goal insights
+    if (activeGoalsCount > 0) {
+      if (averageGoalProgress >= 75) {
+        insights.push({
+          type: 'positive',
+          icon: '🎯',
+          title: 'Goals On Track',
+          message: `Your goals are ${averageGoalProgress.toFixed(0)}% complete on average. Great progress!`
+        });
+      } else if (averageGoalProgress < 25) {
+        insights.push({
+          type: 'suggestion',
+          icon: '🚀',
+          title: 'Goal Momentum',
+          message: `Break down your goals into smaller tasks to build momentum.`
+        });
+      }
+    }
+
+    // Task insights
+    const overdueTasks = tasks?.filter(task => {
+      if (!task.due_date || task.completed) return false;
+      return new Date(task.due_date) < new Date();
+    }).length || 0;
+
+    if (overdueTasks > 0) {
+      insights.push({
+        type: 'warning',
+        icon: '⏰',
+        title: 'Overdue Tasks',
+        message: `You have ${overdueTasks} overdue task${overdueTasks > 1 ? 's' : ''}. Consider rescheduling or completing them.`
+      });
+    }
+
+    // Correlation insights (mood + productivity)
+    if (averageMood >= 7 && completedTasksCount >= 5) {
+      insights.push({
+        type: 'insight',
+        icon: '💡',
+        title: 'Productivity Pattern',
+        message: `Your high mood (${averageMood.toFixed(1)}/10) correlates with strong productivity (${completedTasksCount} tasks completed).`
+      });
+    }
+
+    // Limit to top 4 insights
+    const topInsights = insights.slice(0, 4);
+
     res.json({
       stats: {
         totalSessions,
         currentStreak,
         averageMood: Math.round(averageMood * 10) / 10,
-        completedTasks: completedTasksCount
+        completedTasks: completedTasksCount,
+        activeGoals: activeGoalsCount,
+        activeHabits: totalActiveHabits,
+        habitsCompletedToday,
+        goalProgress: Math.round(averageGoalProgress)
       },
       moodData: last7Days,
       recentEntries,
-      upcomingTasks
+      upcomingTasks,
+      activeGoals: goals?.slice(0, 3) || [],
+      todayHabits: habits?.slice(0, 5) || [],
+      insights: topInsights
     });
 
   } catch (error) {
@@ -722,14 +751,15 @@ app.get('/api/dashboard', authenticateToken, async (req, res) => {
 // Task Management Routes
 app.get('/api/tasks', authenticateToken, async (req, res) => {
   try {
-    const { data: tasks, error } = await supabase
-      .from('tasks')
-      .select('*')
-      .eq('user_id', req.user.id)
-      .order('created_at', { ascending: false });
+    const userId = toObjectId(req.user.id);
+    console.log('Fetching tasks for user:', userId, '(type:', typeof userId, ')');
+    
+    const tasks = await storage.findTasks(
+      { user_id: userId },
+      { sort: { created_at: -1 } }
+    );
 
-    if (error) throw error;
-
+    console.log('Found tasks:', tasks?.length || 0, 'tasks');
     res.json(tasks || []);
   } catch (error) {
     console.error('Tasks fetch error:', error);
@@ -745,21 +775,15 @@ app.post('/api/tasks', authenticateToken, async (req, res) => {
       return res.status(400).json({ error: 'Title is required' });
     }
 
-    const { data: task, error } = await supabase
-      .from('tasks')
-      .insert([{
-        user_id: req.user.id,
-        title,
-        description: description || '',
-        due_date: due_date || null,
-        priority: priority || 'medium',
-        completed: false,
-        created_at: new Date().toISOString()
-      }])
-      .select()
-      .single();
-
-    if (error) throw error;
+    const task = await storage.createTask({
+      user_id: toObjectId(req.user.id),
+      title,
+      description: description || '',
+      due_date: due_date || null,
+      priority: priority || 'medium',
+      completed: false,
+      created_at: new Date()
+    });
 
     res.status(201).json(task);
   } catch (error) {
@@ -774,39 +798,29 @@ app.put('/api/tasks/:id', authenticateToken, async (req, res) => {
     const updates = req.body;
 
     // Get the current task state to check if it's being completed
-    const { data: currentTask } = await supabase
-      .from('tasks')
-      .select('completed')
-      .eq('id', id)
-      .eq('user_id', req.user.id)
-      .single();
+    const currentTask = await storage.findTask({
+      _id: id,
+      user_id: toObjectId(req.user.id)
+    });
 
-    const { data: task, error } = await supabase
-      .from('tasks')
-      .update({
-        ...updates,
-        updated_at: new Date().toISOString()
-      })
-      .eq('id', id)
-      .eq('user_id', req.user.id)
-      .select()
-      .single();
-
-    if (error) throw error;
-
-    if (!task) {
+    if (!currentTask) {
       return res.status(404).json({ error: 'Task not found' });
     }
 
+    // Check if task is being completed
+    const wasCompleted = currentTask.completed;
+    
+    // Update task
+    const task = await storage.updateTask(id, { ...updates, updated_at: new Date() });
+
     // If task is being marked as completed (from false to true), create completion tracking entry
-    if (currentTask && !currentTask.completed && updates.completed === true) {
+    if (!wasCompleted && updates.completed === true) {
       console.log('Creating task completion tracking entry for user:', req.user.id);
       
       // Create a special journal entry to track task completion
-      const { error: journalError } = await supabase
-        .from('journal_entries')
-        .insert([{
-          user_id: req.user.id,
+      try {
+        await storage.createJournalEntry({
+          user_id: toObjectId(req.user.id),
           transcription: `TASK_COMPLETED: ${task.title}`,
           ai_response: {
             summary: `Congratulations! You completed the task: "${task.title}". This achievement has been recorded in your progress tracking.`,
@@ -814,14 +828,12 @@ app.put('/api/tasks/:id', authenticateToken, async (req, res) => {
             type: 'task_completion'
           },
           mood_score: 8,
-          created_at: new Date().toISOString()
-        }]);
-
-      if (journalError) {
+          created_at: new Date()
+        });
+        console.log('Successfully created task completion tracking entry');
+      } catch (journalError) {
         console.error('Error creating task completion entry:', journalError);
         // Don't fail the request, just log the error
-      } else {
-        console.log('Successfully created task completion tracking entry');
       }
     }
 
@@ -835,14 +847,20 @@ app.put('/api/tasks/:id', authenticateToken, async (req, res) => {
 app.delete('/api/tasks/:id', authenticateToken, async (req, res) => {
   try {
     const { id } = req.params;
+    const userId = toObjectId(req.user.id);
+    
+    console.log('Deleting task:', id, 'for user:', userId);
 
-    const { error } = await supabase
-      .from('tasks')
-      .delete()
-      .eq('id', id)
-      .eq('user_id', req.user.id);
+    const result = await storage.deleteTask({
+      _id: id,
+      user_id: userId
+    });
 
-    if (error) throw error;
+    console.log('Delete result:', result);
+
+    if (result.deletedCount === 0) {
+      return res.status(404).json({ error: 'Task not found' });
+    }
 
     res.json({ message: 'Task deleted successfully' });
   } catch (error) {
@@ -854,13 +872,10 @@ app.delete('/api/tasks/:id', authenticateToken, async (req, res) => {
 // Journal Routes
 app.get('/api/journal', authenticateToken, async (req, res) => {
   try {
-    const { data: entries, error } = await supabase
-      .from('journal_entries')
-      .select('*')
-      .eq('user_id', req.user.id)
-      .order('created_at', { ascending: false });
-
-    if (error) throw error;
+    const entries = await storage.findJournalEntries(
+      { user_id: toObjectId(req.user.id) },
+      { sort: { created_at: -1 } }
+    );
 
     res.json(entries || []);
   } catch (error) {
@@ -874,14 +889,13 @@ app.get('/api/mood/analytics', authenticateToken, async (req, res) => {
   try {
     const { period = 'weekly' } = req.query;
 
-    const { data: entries, error } = await supabase
-      .from('journal_entries')
-      .select('mood_score, created_at')
-      .eq('user_id', req.user.id)
-      .not('mood_score', 'is', null)
-      .order('created_at', { ascending: true });
-
-    if (error) throw error;
+    const entries = await storage.findJournalEntries({
+      user_id: toObjectId(req.user.id),
+      mood_score: { $ne: null }
+    }, {
+      sort: { created_at: 1 },
+      select: 'mood_score created_at'
+    });
 
     let moodData = [];
 
@@ -893,7 +907,7 @@ app.get('/api/mood/analytics', authenticateToken, async (req, res) => {
         const dateStr = date.toISOString().split('T')[0];
         
         const dayEntries = entries?.filter(entry => 
-          entry.created_at.split('T')[0] === dateStr
+          toISOString(entry.created_at).split('T')[0] === dateStr
         ) || [];
         
         const averageMood = dayEntries.length > 0
@@ -915,7 +929,7 @@ app.get('/api/mood/analytics', authenticateToken, async (req, res) => {
         const dateStr = date.toISOString().split('T')[0];
         
         const dayEntries = entries?.filter(entry => 
-          entry.created_at.split('T')[0] === dateStr
+          toISOString(entry.created_at).split('T')[0] === dateStr
         ) || [];
         
         const averageMood = dayEntries.length > 0
@@ -957,6 +971,280 @@ app.get('/api/mood/analytics', authenticateToken, async (req, res) => {
   }
 });
 
+// Goals Routes
+app.get('/api/goals', authenticateToken, async (req, res) => {
+  try {
+    const { status } = req.query;
+    const query = { user_id: toObjectId(req.user.id) };
+    if (status) query.status = status;
+
+    const goals = await storage.findGoals(query, { sort: { created_at: -1 } });
+    res.json(goals || []);
+  } catch (error) {
+    console.error('Goals fetch error:', error);
+    res.status(500).json({ error: 'Failed to fetch goals' });
+  }
+});
+
+app.post('/api/goals', authenticateToken, async (req, res) => {
+  try {
+    const { title, description, category, target_date, milestones } = req.body;
+
+    if (!title) {
+      return res.status(400).json({ error: 'Title is required' });
+    }
+
+    const goal = await storage.createGoal({
+      user_id: toObjectId(req.user.id),
+      title,
+      description: description || '',
+      category: category || 'personal',
+      target_date: target_date || null,
+      milestones: milestones || [],
+      progress: 0,
+      status: 'active',
+      created_at: new Date(),
+      updated_at: new Date()
+    });
+
+    res.status(201).json(goal);
+  } catch (error) {
+    console.error('Goal creation error:', error);
+    res.status(500).json({ error: 'Failed to create goal' });
+  }
+});
+
+app.put('/api/goals/:id', authenticateToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const updates = { ...req.body, updated_at: new Date() };
+
+    const goal = await storage.updateGoal(id, updates);
+    
+    if (!goal) {
+      return res.status(404).json({ error: 'Goal not found' });
+    }
+
+    res.json(goal);
+  } catch (error) {
+    console.error('Goal update error:', error);
+    res.status(500).json({ error: 'Failed to update goal' });
+  }
+});
+
+app.delete('/api/goals/:id', authenticateToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const result = await storage.deleteGoal({
+      _id: id,
+      user_id: toObjectId(req.user.id)
+    });
+
+    if (result.deletedCount === 0) {
+      return res.status(404).json({ error: 'Goal not found' });
+    }
+
+    res.json({ message: 'Goal deleted successfully' });
+  } catch (error) {
+    console.error('Goal deletion error:', error);
+    res.status(500).json({ error: 'Failed to delete goal' });
+  }
+});
+
+// Habits Routes
+app.get('/api/habits', authenticateToken, async (req, res) => {
+  try {
+    const { active } = req.query;
+    const query = { user_id: toObjectId(req.user.id) };
+    if (active !== undefined) query.active = active === 'true';
+
+    const habits = await storage.findHabits(query, { sort: { created_at: -1 } });
+    res.json(habits || []);
+  } catch (error) {
+    console.error('Habits fetch error:', error);
+    res.status(500).json({ error: 'Failed to fetch habits' });
+  }
+});
+
+app.post('/api/habits', authenticateToken, async (req, res) => {
+  try {
+    const { name, description, frequency, target_days } = req.body;
+
+    if (!name) {
+      return res.status(400).json({ error: 'Name is required' });
+    }
+
+    const habit = await storage.createHabit({
+      user_id: toObjectId(req.user.id),
+      name,
+      description: description || '',
+      frequency: frequency || 'daily',
+      target_days: target_days || [],
+      streak: { current: 0, longest: 0 },
+      completions: [],
+      active: true,
+      created_at: new Date(),
+      updated_at: new Date()
+    });
+
+    res.status(201).json(habit);
+  } catch (error) {
+    console.error('Habit creation error:', error);
+    res.status(500).json({ error: 'Failed to create habit' });
+  }
+});
+
+app.put('/api/habits/:id', authenticateToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const updates = { ...req.body, updated_at: new Date() };
+
+    const habit = await storage.updateHabit(id, updates);
+    
+    if (!habit) {
+      return res.status(404).json({ error: 'Habit not found' });
+    }
+
+    res.json(habit);
+  } catch (error) {
+    console.error('Habit update error:', error);
+    res.status(500).json({ error: 'Failed to update habit' });
+  }
+});
+
+app.post('/api/habits/:id/complete', authenticateToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { notes } = req.body;
+
+    // Get current habit
+    const habits = await storage.findHabits({ 
+      _id: id, 
+      user_id: toObjectId(req.user.id) 
+    });
+    
+    if (!habits || habits.length === 0) {
+      return res.status(404).json({ error: 'Habit not found' });
+    }
+
+    const habit = habits[0];
+    const today = new Date().toISOString().split('T')[0];
+    
+    // Check if already completed today
+    const alreadyCompleted = habit.completions?.some(c => 
+      new Date(c.date).toISOString().split('T')[0] === today
+    );
+
+    if (alreadyCompleted) {
+      return res.status(400).json({ error: 'Habit already completed today' });
+    }
+
+    // Add completion
+    const completions = [...(habit.completions || []), { date: new Date(), notes }];
+    
+    // Calculate streak
+    const sortedCompletions = completions
+      .map(c => new Date(c.date).toISOString().split('T')[0])
+      .sort()
+      .reverse();
+    
+    let currentStreak = 1;
+    for (let i = 1; i < sortedCompletions.length; i++) {
+      const current = new Date(sortedCompletions[i-1]);
+      const previous = new Date(sortedCompletions[i]);
+      const diffDays = Math.floor((current - previous) / (1000 * 60 * 60 * 24));
+      
+      if (diffDays === 1) {
+        currentStreak++;
+      } else if (diffDays > 1) {
+        break;
+      }
+    }
+
+    const longestStreak = Math.max(currentStreak, habit.streak?.longest || 0);
+
+    const updatedHabit = await storage.updateHabit(id, {
+      completions,
+      streak: { current: currentStreak, longest: longestStreak },
+      updated_at: new Date()
+    });
+
+    res.json(updatedHabit);
+  } catch (error) {
+    console.error('Habit completion error:', error);
+    res.status(500).json({ error: 'Failed to complete habit' });
+  }
+});
+
+app.delete('/api/habits/:id', authenticateToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const result = await storage.deleteHabit({
+      _id: id,
+      user_id: toObjectId(req.user.id)
+    });
+
+    if (result.deletedCount === 0) {
+      return res.status(404).json({ error: 'Habit not found' });
+    }
+
+    res.json({ message: 'Habit deleted successfully' });
+  } catch (error) {
+    console.error('Habit deletion error:', error);
+    res.status(500).json({ error: 'Failed to delete habit' });
+  }
+});
+
+// Data Export Route
+app.get('/api/export', authenticateToken, async (req, res) => {
+  try {
+    const { format = 'json' } = req.query;
+    const userId = toObjectId(req.user.id);
+
+    // Fetch all user data
+    const [journalEntries, tasks, goals, habits] = await Promise.all([
+      storage.findJournalEntries({ user_id: userId }, { sort: { created_at: -1 } }),
+      storage.findTasks({ user_id: userId }, { sort: { created_at: -1 } }),
+      storage.findGoals({ user_id: userId }, { sort: { created_at: -1 } }),
+      storage.findHabits({ user_id: userId }, { sort: { created_at: -1 } })
+    ]);
+
+    const exportData = {
+      exported_at: new Date().toISOString(),
+      user_id: userId,
+      journal_entries: journalEntries || [],
+      tasks: tasks || [],
+      goals: goals || [],
+      habits: habits || []
+    };
+
+    if (format === 'csv') {
+      // Simple CSV export for journal entries
+      let csv = 'Date,Mood Score,Transcription\n';
+      journalEntries?.forEach(entry => {
+        const date = new Date(entry.created_at).toLocaleDateString();
+        const mood = entry.mood_score || 'N/A';
+        const text = (entry.transcription || '').replace(/"/g, '""');
+        csv += `"${date}","${mood}","${text}"\n`;
+      });
+      
+      res.setHeader('Content-Type', 'text/csv');
+      res.setHeader('Content-Disposition', 'attachment; filename=wellness-data.csv');
+      res.send(csv);
+    } else {
+      res.setHeader('Content-Type', 'application/json');
+      res.setHeader('Content-Disposition', 'attachment; filename=wellness-data.json');
+      res.json(exportData);
+    }
+  } catch (error) {
+    console.error('Export error:', error);
+    res.status(500).json({ error: 'Failed to export data' });
+  }
+});
+
+
 
 // Error handling middleware
 app.use(errorHandler);
@@ -972,7 +1260,7 @@ const server = app.listen(PORT, () => {
   console.log(`📍 Local: http://localhost:${PORT}`);
   console.log(`🧠 AI: Gemini API configured`);
   console.log(`🔊 TTS: ElevenLabs API configured`);
-  console.log(`💾 Database: Supabase configured`);
+  console.log(`💾 Database: MongoDB Atlas configured`);
   console.log(`\n✨ Ready to be your AI friend!\n`);
 });
 
